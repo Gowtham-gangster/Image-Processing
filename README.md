@@ -10,40 +10,19 @@ individuals from CCTV footage — even when faces are masked or partially occlud
 ```
 MaskAwareHybridID/
 │
-├── dataset/
-│   ├── train/
-│   │   ├── person1/          ← Training images for person1
-│   │   └── person2/          ← Training images for person2
-│   ├── test/
-│   │   ├── person1/          ← Test images for person1
-│   │   └── person2/          ← Test images for person2
-│   └── persons.csv           ← Person attribute database
-│
-├── models/                   ← Saved model files (auto-created)
-│   ├── recognizer.yml        ← Trained LBPH model
-│   ├── label_map.pkl         ← int → person_id mapping
-│   ├── deploy.prototxt       ← [DOWNLOAD] DNN face detector config
-│   ├── res10_300x300_ssd_iter_140000.caffemodel  ← [DOWNLOAD] DNN weights
-│   └── mask_detector.model   ← [OPTIONAL] Keras mask classifier
-│
-├── logs/                     ← Detection logs (auto-created)
-│   ├── surveillance.log
-│   └── detections.csv
-│
-├── config.py                 ← Central configuration (paths, thresholds)
-├── database.py               ← persons.csv read/write interface
-├── dataset_utils.py          ← Image loading, preprocessing, training data builder
-├── face_detector.py          ← OpenCV DNN + Haar Cascade face detection
-├── mask_detector.py          ← Mask classification (Keras model or heuristic)
-├── feature_extractor.py      ← HOG + LBP hybrid feature extraction
-├── person_identifier.py      ← LBPH-based identity matching + DB lookup
-├── model_trainer.py          ← Train and save recognition model
-├── surveillance_app.py       ← Main application (image / video / camera)
-├── realtime.py               ← Real-time CCTV recognition with HUD overlay
-├── evaluate.py               ← LBPH test-split evaluation and reporting
-├── evaluate_model.py         ← Full sklearn evaluation + confusion matrix
-├── evaluation.py             ← Embedding-based evaluator (MTCNN + FAISS)
-└── requirements.txt
+├── api/                      ← Vercel serverless entrypoint (index.py)
+├── dataset/                  ← Training images, test images, and persons.csv
+├── models/                   ← Saved models (DNN weights, LBPH, ONNX engines)
+├── logs/                     ← Detections, logs, events, and metrics
+├── scripts/                  ← Training, evaluation, and DB migration tools
+├── tests/                    ← API and System integration tests
+├── dashboard/                ← React dashboard frontend
+├── Dockerfile                ← Docker deployment config
+├── docker-compose.yml        ← Local multi-container arrangement
+├── vercel.json               ← Vercel deployment config (API routing)
+├── requirements.txt          ← Core Python dependencies
+├── SURVEILLANCE_APPS.py      ← (realtime.py, surveillance_app.py, enrollment_gui.py)
+└── CORE_ENGINE.py            ← (detection.py, mask_detector.py, extraction.py, etc.)
 ```
 
 ---
@@ -55,6 +34,10 @@ MaskAwareHybridID/
 ```bash
 pip install -r requirements.txt
 ```
+
+### Note on Cloud Deployment
+Due to the massive size of machine learning dependencies (`tensorflow`, `ultralytics`, `opencv` sum up to ~9GB), **Serverless platforms like Vercel or AWS Lambda are inherently incompatible**.
+You **must** deploy this backend using **Docker** on platforms like Render, Railway, or standard Virtual Machines. A `Dockerfile` and `docker-compose.yml` are provided in the repo.
 
 > **Note:** `tensorflow` is optional. If not installed, the mask detector
 > automatically falls back to a skin-tone heuristic.
@@ -151,14 +134,14 @@ python evaluation.py --thresh 0.70 --no-plot
 |--------|---------|
 | `realtime.py` | Live webcam / CCTV recognition with HUD overlay |
 | `surveillance_app.py` | Image / video / camera surveillance app |
-| `train_model.py` | Train SVM or KNN classifier on embeddings |
-| `model_trainer.py` | Train LBPH recognizer (simpler pipeline) |
-| `evaluate.py` | LBPH accuracy evaluation on `dataset/test/` |
-| `evaluate_model.py` | Full sklearn metrics + confusion matrix |
-| `evaluation.py` | CNN embedding evaluator (MTCNN + FAISS) |
-| `test_system.py` | End-to-end test with per-image output |
+| `scripts/train_model.py` | Train SVM or KNN classifier on embeddings |
+| `scripts/model_trainer.py` | Train LBPH recognizer (simpler pipeline) |
+| `scripts/evaluate.py` | LBPH accuracy evaluation on `dataset/test/` |
+| `scripts/evaluate_model.py` | Full sklearn metrics + confusion matrix |
+| `scripts/evaluation.py` | CNN embedding evaluator (MTCNN + FAISS) |
+| `tests/test_system.py` | End-to-end test with per-image output |
 | `enrollment_gui.py` | Tkinter GUI for enrolling new identities |
-| `embeddings.py` | Extract and store MobileNetV2 embeddings |
+| `scripts/embeddings.py` | Extract and store MobileNetV2 embeddings |
 | `detection.py` | Standalone face / body detector demo |
 | `recognition.py` | End-to-end recognition pipeline demo |
 | `attributes.py` | Query person attributes from persons.csv |
