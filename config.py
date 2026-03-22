@@ -14,7 +14,8 @@ ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
 DATASET_DIR       = os.path.join(ROOT_DIR, "dataset")
 TRAIN_DIR         = os.path.join(DATASET_DIR, "train")
 TEST_DIR          = os.path.join(DATASET_DIR, "test")
-PERSONS_DB        = os.path.join(DATASET_DIR, "persons.db")
+IS_VERCEL         = os.environ.get("VERCEL") == "1"
+PERSONS_DB        = os.path.join("/tmp", "persons.db") if IS_VERCEL else os.path.join(DATASET_DIR, "persons.db")
 
 
 # ── Model / asset paths ─────────────────────────────────────────────────────
@@ -46,12 +47,12 @@ TRT_DETECTOR_ENGINE  = os.path.join(TRT_DIR, "ssd_face_detector.engine")
 INFERENCE_BACKEND    = os.environ.get("MASKAWARE_BACKEND", "original")
 
 # Logs
-LOGS_DIR          = os.path.join(ROOT_DIR, "logs")
+LOGS_DIR          = os.path.join("/tmp", "logs") if IS_VERCEL else os.path.join(ROOT_DIR, "logs")
 LOG_FILE          = os.path.join(LOGS_DIR, "surveillance.log")
 
 # ── Events / Alerts ──────────────────────────────────────────────────────────
 EVENTS_DB         = os.path.join(LOGS_DIR, "events.db")
-ALERT_CONFIG_PATH = os.path.join(ROOT_DIR, "alerts_config.json")
+ALERT_CONFIG_PATH = os.path.join("/tmp", "alerts_config.json") if IS_VERCEL else os.path.join(ROOT_DIR, "alerts_config.json")
 
 # ── Detection / recognition parameters ─────────────────────────────────────
 FACE_CONF_THRESHOLD   = 0.5    # DNN face detector confidence threshold
@@ -77,4 +78,7 @@ LOG_LEVEL = "INFO"   # DEBUG | INFO | WARNING | ERROR
 
 # ── Ensure output directories exist ─────────────────────────────────────────
 for _d in [MODELS_DIR, LOGS_DIR]:
-    os.makedirs(_d, exist_ok=True)
+    try:
+        os.makedirs(_d, exist_ok=True)
+    except OSError:
+        pass
