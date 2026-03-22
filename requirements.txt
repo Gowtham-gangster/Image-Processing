@@ -1,0 +1,13 @@
+fastapi
+uvicorn
+python-multipart
+numpy<2.0.0
+opencv-python-headless
+faiss-cpu
+scikit-learn
+joblib
+tensorflow-cpu
+ultralytics
+deep-sort-realtime
+requests
+pydantic

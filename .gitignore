@@ -1,0 +1,37 @@
+# Virtual Environments
+.venv/
+venv/
+env/
+ENV/
+
+# Python Cache
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+
+# Datasets & Models
+dataset/
+models/
+embeddings/
+yolov8n.pt
+
+# Databases
+database/
+*.db
+*.sqlite3
+
+# Logs and Output
+logs/
+*.log
+
+# Dashboard
+dashboard/node_modules/
+dashboard/dist/
+dashboard/.next/
+
+# IDEs and Secrets
+.vscode/
+.idea/
+.env
+alerts_config.json

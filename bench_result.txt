@@ -1,0 +1,9 @@
+﻿
+  Inference Latency Benchmark  ò  50 iters  ò  warm-up 10
+  ------------------------------------------------------------------------------------
+  Model                 Original    ONNX CPU   ONNX INT8    ONNX GPU    TRT FP16
+  ------------------------------------------------------------------------------------
+  Face Embedder           4.2 ms      0.0 ms      0.1 ms         N/A         N/A
+  ------------------------------------------------------------------------------------
+
+  Face Embedder: ONNX CPU is 152.2╫ faster than original
