@@ -12,6 +12,12 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 import os
+import sys
+
+# Ensure relative imports and model loading works
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if BASE_DIR not in sys.path:
+    sys.path.append(BASE_DIR)
 
 from detection import Detector
 from face_alignment import FaceAligner
@@ -94,10 +100,11 @@ def startup_event():
     
     import pickle
     
-    idx_path = "embeddings/faiss_index.index"
-    body_path = "embeddings/body_faiss.index"
-    attr_path = "embeddings/attr_faiss.index"
-    labels_path = "embeddings/multi_labels.pkl"
+    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    idx_path = os.path.join(base_dir, "embeddings", "faiss_index.index")
+    body_path = os.path.join(base_dir, "embeddings", "body_faiss.index")
+    attr_path = os.path.join(base_dir, "embeddings", "attr_faiss.index")
+    labels_path = os.path.join(base_dir, "embeddings", "multi_labels.pkl")
     
     if os.path.exists(idx_path):
         face_faiss = faiss.read_index(idx_path)
@@ -111,8 +118,9 @@ def startup_event():
             multi_labels = pickle.load(f)
         logger.info("Multi-modal FAISS pipelines strictly cached in-memory.")
 
-    if os.path.exists("embeddings/labels.pkl"):
-        with open("embeddings/labels.pkl", "rb") as f:
+    legacy_path = os.path.join(base_dir, "embeddings", "labels.pkl")
+    if os.path.exists(legacy_path):
+        with open(legacy_path, "rb") as f:
             label_map = pickle.load(f)
         logger.info("Legacy labels loaded.")
         
@@ -261,7 +269,7 @@ def _push_sse_event(event: dict):
     except asyncio.QueueFull:
         pass
 
-@app.post("/recognize/image", tags=["Recognition"])
+@app.post("/upload", tags=["Recognition"])
 async def recognize_image(file: UploadFile = File(...), camera_id: str = "API"):
     """
     Upload an image file, detect all faces via MTCNN, then run:
@@ -569,7 +577,7 @@ def recognize_uploaded_image(image_path: str) -> dict:
         "debug_info": debug_info
     }
 
-@app.post("/predict-image", tags=["Recognition"])
+@app.post("/predict", tags=["Recognition"])
 async def predict_image(file: UploadFile = File(...)):
     """
     Evaluate a single uploaded image and return a JSON response with
@@ -604,7 +612,7 @@ async def predict_image(file: UploadFile = File(...)):
 
 
 # ── Serve React Dashboard ─────────────────────────────────────────────────────
-_dashboard_dist = os.path.join(os.path.dirname(__file__), "dashboard", "dist")
+_dashboard_dist = os.path.join(os.path.dirname(os.path.dirname(__file__)), "dashboard", "dist")
 if os.path.isdir(_dashboard_dist):
     app.mount("/", StaticFiles(directory=_dashboard_dist, html=True), name="dashboard")
 # Multi-Modal Pipeline Active
