@@ -123,7 +123,9 @@ export default function ImageTest() {
             )}
 
             {!isLoading && prediction && (
-              <ResultCard prediction={prediction} />
+              <>
+                <ResultCard prediction={prediction} />
+              </>
             )}
 
             {!isLoading && !error && !prediction && (

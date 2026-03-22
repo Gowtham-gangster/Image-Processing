@@ -116,46 +116,46 @@ class YoloPersonDetector:
             if bw < 10 or bh < 10:
                 continue
                 
-            # 2. Extract Body Region
-            body_crop = frame[y1:y2, x1:x2]
+            # 2. Extract strictly the Upper Body Region (top 45%)
+            y2_upper = min(y2, y1 + int(bh * 0.45))
+            body_crop = frame[y1:y2_upper, x1:x2]
             
-            # 3. Run Face Detection strictly inside the body region
-            # We must handle cases where the face is partly out of frame or occluded
-            face_results = self.aligner.align(body_crop)
+            # 3. Super-scale 1.5x and run Face Detection
+            upscaled_body = cv2.resize(body_crop, None, fx=1.5, fy=1.5)
+            face_results = self.aligner.align(upscaled_body)
             
             face_bbox = None
             face_crop = None
+            face_conf = 0.0
             
             if face_results:
-                # 4. Pair Face to Body
-                # If MTCNN somehow found multiple faces inside a single person's body box (e.g. holding a poster)
-                # We assume the largest bounding box area is the true anatomical face.
                 best_face = max(face_results, key=lambda f: f["box"][2] * f["box"][3])
                 
-                # The returned face box is relative to the *body_crop* (0,0 is top-left of body).
-                # We must offset it back to absolute global frame coordinates.
-                rel_fx, rel_fy, fw_f, fh_f = best_face["box"]
+                # Rescale face bounds back down to 1.0x native body indices
+                rel_fx = int(best_face["box"][0] / 1.5)
+                rel_fy = int(best_face["box"][1] / 1.5)
+                fw_f   = int(best_face["box"][2] / 1.5)
+                fh_f   = int(best_face["box"][3] / 1.5)
                 
                 abs_fx = x1 + rel_fx
                 abs_fy = y1 + rel_fy
                 
-                # Clip Face to Frame
                 abs_fx = max(0, abs_fx)
                 abs_fy = max(0, abs_fy)
                 fw_f = min(fw - abs_fx, fw_f)
                 fh_f = min(fh - abs_fy, fh_f)
                 
                 face_bbox = [abs_fx, abs_fy, fw_f, fh_f]
-                
-                # We use the perfectly geometrically aligned 224x224 crop generated natively by MTCNN
                 face_crop = best_face["aligned_crop"]
+                face_conf = best_face["confidence"]
                 
             final_results.append({
                 "person_bbox": [x1, y1, bw, bh],
                 "person_conf": float(conf),
                 "body_crop": body_crop,
                 "face_bbox": face_bbox,
-                "face_crop": face_crop
+                "face_crop": face_crop,
+                "face_conf": float(face_conf)
             })
             
         return final_results
