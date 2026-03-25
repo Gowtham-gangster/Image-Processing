@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 
-const API = 'http://localhost:8000'
+import { API } from '../config'
 
 function AlertBadge({ type }) {
   if (type === 'unknown_person') return <span className="badge unknown" style={{ backgroundColor: 'rgba(239, 68, 68, 0.2)', color: '#ef4444' }}>UNKNOWN</span>

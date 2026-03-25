@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 
-const API = 'http://localhost:8000'
+import { API } from '../config'
 
 function Bar({ value, max, color }) {
   const pct = max > 0 ? Math.round((value / max) * 100) : 0

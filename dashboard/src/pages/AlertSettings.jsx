@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 
-const API = 'http://localhost:8000'
+import { API } from '../config'
 
 const EMPTY_FORM = {
   slack_webhook_url: '',

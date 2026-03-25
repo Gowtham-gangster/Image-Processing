@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import ImageUpload from '../components/ImageUpload';
 import ResultCard from '../components/ResultCard';
+import { API } from '../config';
 
 export default function ImageTest() {
   const [file, setFile] = useState(null);
@@ -34,7 +35,7 @@ export default function ImageTest() {
     formData.append('file', file);
 
     try {
-      const response = await fetch('http://localhost:8000/predict-image', {
+      const response = await fetch(`${API}/predict-image`, {
         method: 'POST',
         body: formData,
       });

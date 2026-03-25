@@ -330,7 +330,7 @@ async def recognize_image(file: UploadFile = File(...), camera_id: str = "API"):
                 person_id = "Unknown Person"
                 score = 0.0
                 
-                if faiss_idx is not None:
+                if face_faiss is not None:
                     norm = np.linalg.norm(emb)
                     if norm > 0: emb = emb / norm
                     q_vec = np.array([emb], dtype=np.float32)
@@ -609,6 +609,236 @@ async def predict_image(file: UploadFile = File(...)):
     finally:
         if os.path.exists(temp_path):
             os.remove(temp_path)
+
+
+# ── Live Video Feed ──────────────────────────────────────────────────────────
+
+# Global camera state
+_camera_active = False
+_camera_lock = asyncio.Lock()
+
+@app.get("/video/feed", tags=["Video"])
+async def video_feed(camera_id: int = Query(0, description="Camera device index")):
+    """
+    MJPEG video stream endpoint with real-time person detection and identification.
+    Returns a continuous stream of JPEG frames with detection overlays.
+    """
+    async def generate_frames():
+        global _camera_active
+        
+        async with _camera_lock:
+            if _camera_active:
+                raise HTTPException(status_code=409, detail="Camera already in use")
+            _camera_active = True
+        
+        cap = None
+        try:
+            cap = cv2.VideoCapture(camera_id)
+            if not cap.isOpened():
+                raise HTTPException(status_code=404, detail=f"Cannot open camera {camera_id}")
+            
+            logger.info(f"Live video feed started on camera {camera_id}")
+            
+            while True:
+                ret, frame = cap.read()
+                if not ret:
+                    logger.warning("Failed to read frame from camera")
+                    break
+                
+                # Process frame with detection and recognition
+                try:
+                    # Run YOLO person detection + face detection
+                    detections = yolo_detector.detect(frame)
+                    
+                    for det in detections:
+                        person_bbox = det.get("person_bbox")
+                        face_bbox = det.get("face_bbox")
+                        face_crop = det.get("face_crop")
+                        body_crop = det.get("body_crop")
+                        
+                        if person_bbox:
+                            px, py, pw, ph = person_bbox
+                            
+                            # Initialize result variables
+                            person_id = "Unknown Person"
+                            confidence = 0.0
+                            is_masked = False
+                            is_known = False
+                            
+                            # If face detected, run full recognition pipeline
+                            if face_crop is not None and face_crop.size > 0:
+                                # Mask detection
+                                try:
+                                    is_masked, _ = mask_det.is_masked(face_crop)
+                                except Exception:
+                                    is_masked = False
+                                
+                                # Liveness check
+                                is_live, spoof_msg = liveness_det.check(face_crop)
+                                if not is_live:
+                                    person_id = "SPOOF"
+                                    colour = (0, 0, 255)  # Red
+                                else:
+                                    # Multi-modal recognition
+                                    scores = {}
+                                    
+                                    # Face embedding
+                                    if face_faiss is not None:
+                                        try:
+                                            f_emb = embedder.extract(face_crop, masked=False)
+                                            norm = np.linalg.norm(f_emb)
+                                            if norm > 0: f_emb = f_emb / norm
+                                            f_vec = np.array([f_emb], dtype=np.float32)
+                                            f_dists, f_inds = face_faiss.search(f_vec, 5)
+                                            
+                                            f_labels_map = multi_labels.get("face_labels", [])
+                                            for d, i in zip(f_dists[0], f_inds[0]):
+                                                if i != -1 and i < len(f_labels_map):
+                                                    pid_int = f_labels_map[i]
+                                                    pid = label_map.get(pid_int, str(pid_int))
+                                                    scr = max(0.0, 1.0 - (d / 2.0))
+                                                    if pid not in scores: scores[pid] = {"F": 0, "B": 0, "A": 0}
+                                                    scores[pid]["F"] = max(scores[pid]["F"], scr)
+                                        except Exception as e:
+                                            logger.debug(f"Face embedding failed: {e}")
+                                    
+                                    # Body embedding
+                                    if body_faiss is not None and body_crop is not None:
+                                        try:
+                                            b_emb = body_extractor.extract(body_crop)
+                                            norm = np.linalg.norm(b_emb)
+                                            if norm > 0: b_emb = b_emb / norm
+                                            b_vec = np.array([b_emb], dtype=np.float32)
+                                            b_dists, b_inds = body_faiss.search(b_vec, 5)
+                                            
+                                            b_labels_map = multi_labels.get("body_labels", [])
+                                            for d, i in zip(b_dists[0], b_inds[0]):
+                                                if i != -1 and i < len(b_labels_map):
+                                                    pid_int = b_labels_map[i]
+                                                    pid = label_map.get(pid_int, str(pid_int))
+                                                    scr = max(0.0, 1.0 - (d / 2.0))
+                                                    if pid not in scores: scores[pid] = {"F": 0, "B": 0, "A": 0}
+                                                    scores[pid]["B"] = max(scores[pid]["B"], scr)
+                                        except Exception as e:
+                                            logger.debug(f"Body embedding failed: {e}")
+                                    
+                                    # Attribute embedding
+                                    if attr_faiss is not None and body_crop is not None:
+                                        try:
+                                            a_emb = attr_extractor.extract(body_crop)
+                                            norm = np.linalg.norm(a_emb)
+                                            if norm > 0: a_emb = a_emb / norm
+                                            a_vec = np.array([a_emb], dtype=np.float32)
+                                            a_dists, a_inds = attr_faiss.search(a_vec, 5)
+                                            
+                                            a_labels_map = multi_labels.get("attr_labels", [])
+                                            for d, i in zip(a_dists[0], a_inds[0]):
+                                                if i != -1 and i < len(a_labels_map):
+                                                    pid_int = a_labels_map[i]
+                                                    pid = label_map.get(pid_int, str(pid_int))
+                                                    scr = max(0.0, 1.0 - (d / 2.0))
+                                                    if pid not in scores: scores[pid] = {"F": 0, "B": 0, "A": 0}
+                                                    scores[pid]["A"] = max(scores[pid]["A"], scr)
+                                        except Exception as e:
+                                            logger.debug(f"Attribute embedding failed: {e}")
+                                    
+                                    # Late fusion
+                                    best_score = 0.0
+                                    for pid, s in scores.items():
+                                        fused = (s["F"] * 0.5) + (s["B"] * 0.3) + (s["A"] * 0.2)
+                                        if fused > best_score:
+                                            best_score = fused
+                                            person_id = pid
+                                    
+                                    confidence = best_score
+                                    if confidence >= 0.60:
+                                        is_known = True
+                                    else:
+                                        person_id = "Unknown Person"
+                            
+                            # Get person attributes
+                            person_name = person_id
+                            if is_known and person_id != "Unknown Person":
+                                attrs = attributes_mgr.get_attributes(person_id)
+                                if attrs:
+                                    person_name = attrs.get("name", person_id)
+                            
+                            # Draw bounding box
+                            colour = (0, 255, 0) if is_known else (0, 0, 255)  # Green for known, Red for unknown
+                            cv2.rectangle(frame, (px, py), (px + pw, py + ph), colour, 2)
+                            
+                            # Draw face box if available
+                            if face_bbox:
+                                fx, fy, fw, fh = face_bbox
+                                cv2.rectangle(frame, (fx, fy), (fx + fw, fy + fh), colour, 1)
+                            
+                            # Draw label
+                            label = f"{person_name} ({confidence:.0%})"
+                            if is_masked:
+                                label += " [MASKED]"
+                            
+                            # Background for text
+                            (text_w, text_h), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
+                            cv2.rectangle(frame, (px, py - text_h - 10), (px + text_w + 10, py), colour, -1)
+                            cv2.putText(frame, label, (px + 5, py - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+                            
+                            # Push SSE event for dashboard
+                            if is_known or person_id == "SPOOF":
+                                event = {
+                                    "timestamp": datetime.now().isoformat(),
+                                    "camera_id": f"Camera_{camera_id}",
+                                    "person_id": person_id,
+                                    "name": person_name,
+                                    "is_known": is_known,
+                                    "is_masked": is_masked,
+                                    "confidence": float(confidence),
+                                }
+                                _push_sse_event(event)
+                                
+                                # Log event
+                                surv_logger.log_event(
+                                    f"Camera_{camera_id}",
+                                    person_id,
+                                    float(confidence),
+                                    is_known=is_known,
+                                    is_masked=is_masked
+                                )
+                
+                except Exception as e:
+                    logger.error(f"Error processing frame: {e}")
+                
+                # Encode frame as JPEG
+                ret, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
+                if not ret:
+                    continue
+                
+                frame_bytes = buffer.tobytes()
+                
+                # Yield frame in MJPEG format
+                yield (b'--frame\r\n'
+                       b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
+                
+                # Small delay to control frame rate
+                await asyncio.sleep(0.033)  # ~30 FPS
+        
+        except Exception as e:
+            logger.error(f"Video feed error: {e}")
+        finally:
+            if cap is not None:
+                cap.release()
+            async with _camera_lock:
+                _camera_active = False
+            logger.info("Live video feed stopped")
+    
+    return StreamingResponse(
+        generate_frames(),
+        media_type="multipart/x-mixed-replace; boundary=frame"
+    )
+
+@app.get("/video/status", tags=["Video"])
+async def video_status():
+    """Check if camera is currently active."""
+    return {"active": _camera_active}
 
 
 # ── Serve React Dashboard ─────────────────────────────────────────────────────

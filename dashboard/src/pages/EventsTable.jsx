@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 
-const API = 'http://localhost:8000'
+import { API } from '../config'
 
 function Badge({ is_known, is_masked, is_live }) {
   if (!is_live) return <span className="badge spoof">SPOOF</span>
