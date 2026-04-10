@@ -1,14 +1,13 @@
 # Mask-Aware Hybrid Person Identification System for CCTV Surveillance
 
-A Python-based machine learning system that detects, identifies, and profiles
-individuals from CCTV footage — even when faces are masked or partially occluded.
+A Python-based machine learning system that detects, identifies, and profiles individuals from CCTV footage — even when faces are masked or partially occluded. Includes a modern React + Vite dashboard for real-time monitoring and analytics.
 
 ---
 
 ## 📁 Project Structure
 
 ```
-MaskAwareHybridID/
+Image-Processing/
 │
 ├── api/                      ← Vercel serverless entrypoint (index.py)
 ├── dataset/                  ← Training images, test images, and persons.csv
@@ -16,13 +15,18 @@ MaskAwareHybridID/
 ├── logs/                     ← Detections, logs, events, and metrics
 ├── scripts/                  ← Training, evaluation, and DB migration tools
 ├── tests/                    ← API and System integration tests
-├── dashboard/                ← React dashboard frontend
+├── dashboard/                ← React + Vite frontend dashboard
+├── embeddings/               ← FAISS indexes and embedding data
+├── database/                 ← Database files
 ├── Dockerfile                ← Docker deployment config
 ├── docker-compose.yml        ← Local multi-container arrangement
 ├── vercel.json               ← Vercel deployment config (API routing)
 ├── requirements.txt          ← Core Python dependencies
-├── SURVEILLANCE_APPS.py      ← (realtime.py, surveillance_app.py, enrollment_gui.py)
-└── CORE_ENGINE.py            ← (detection.py, mask_detector.py, extraction.py, etc.)
+├── realtime.py               ← Live webcam/CCTV recognition with HUD overlay
+├── surveillance_app.py       ← Image/video/camera surveillance application
+├── enrollment_gui.py         ← Tkinter GUI for enrolling new identities
+├── recognition.py            ← End-to-end recognition pipeline demo
+└── detection.py              ← Standalone face/body detector demo
 ```
 
 ---
@@ -225,3 +229,127 @@ All tunable parameters are in **`config.py`**:
 | Use a custom mask model | Train a Keras binary classifier and save to `models/mask_detector.model` |
 | Use deep embeddings | Extend `feature_extractor.py` with a MobileNet/FaceNet backbone |
 | REST API | Wrap `SurveillanceSystem.process_frame()` in a Flask/FastAPI endpoint |
+
+---
+
+## 🎨 Dashboard (React + Vite Frontend)
+
+The `dashboard/` folder contains a modern React + Vite frontend for monitoring and analytics.
+
+### Dashboard Setup
+
+#### Prerequisites
+- Node.js 16+ and npm
+
+#### Installation
+
+```bash
+cd dashboard
+npm install
+```
+
+#### Development
+
+```bash
+npm run dev
+```
+
+This starts the Vite development server with Hot Module Replacement (HMR) enabled.
+
+#### Production Build
+
+```bash
+npm run build
+```
+
+This creates an optimized production build in the `dist/` folder.
+
+#### Preview Build
+
+```bash
+npm run preview
+```
+
+### Technologies Used
+
+- **Vite** - Fast frontend tooling
+- **React** - UI library
+- **ESLint** - Code quality tool
+
+### Official Plugins
+
+- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react) - Uses Oxc for fast transpilation
+- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react-swc) - Uses SWC as an alternative
+
+### ESLint Configuration
+
+For production applications with TypeScript support, refer to the TypeScript + ESLint template on the [Vite repository](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts).
+
+### React Compiler
+
+The React Compiler is not enabled by default due to its impact on development and build performance. For more information, see [React Compiler documentation](https://react.dev/learn/react-compiler/installation).
+
+---
+
+## 🐳 Docker Deployment
+
+### Build Docker Image
+
+```bash
+docker build -t mask-aware-recognition .
+```
+
+### Run with Docker Compose (Recommended)
+
+```bash
+docker-compose up
+```
+
+This starts both the Python backend and React dashboard in containers.
+
+### Run Single Container
+
+```bash
+docker run -v $(pwd)/dataset:/app/dataset \
+           -v $(pwd)/models:/app/models \
+           -v $(pwd)/logs:/app/logs \
+           mask-aware-recognition
+```
+
+---
+
+## 🚀 Deployment
+
+### Vercel (Frontend Only)
+
+The React dashboard can be deployed to Vercel:
+
+```bash
+vercel deploy dashboard/
+```
+
+### Docker Platforms (Full Stack)
+
+Deploy the Docker image to:
+- **Render** - https://render.com
+- **Railway** - https://railway.app
+- **AWS ECS** - https://aws.amazon.com/ecs/
+- **DigitalOcean** - https://www.digitalocean.com/
+
+---
+
+## 📝 License
+
+This project is provided as-is for educational and research purposes.
+
+---
+
+## 👥 Contributing
+
+Contributions are welcome! Please feel free to submit pull requests or open issues for bugs and feature requests.
+
+---
+
+## 📞 Support
+
+For issues, questions, or feature requests, please open an issue on the repository.

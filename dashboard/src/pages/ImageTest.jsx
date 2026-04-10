@@ -35,7 +35,7 @@ export default function ImageTest() {
     formData.append('file', file);
 
     try {
-      const response = await fetch(`${API}/predict-image`, {
+      const response = await fetch(`${API}/predict`, {
         method: 'POST',
         body: formData,
       });

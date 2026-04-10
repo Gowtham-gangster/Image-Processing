@@ -9,6 +9,37 @@ function Badge({ is_known, is_masked, is_live }) {
   return <span className="badge known">KNOWN</span>
 }
 
+function formatTimestamp(isoString) {
+  try {
+    const date = new Date(isoString)
+    const now = new Date()
+    const diffMs = now - date
+    const diffMins = Math.floor(diffMs / 60000)
+    const diffHours = Math.floor(diffMs / 3600000)
+    const diffDays = Math.floor(diffMs / 86400000)
+    
+    // If less than 1 minute ago
+    if (diffMins < 1) return 'Just now'
+    // If less than 1 hour ago
+    if (diffMins < 60) return `${diffMins}m ago`
+    // If less than 24 hours ago
+    if (diffHours < 24) return `${diffHours}h ago`
+    // If less than 7 days ago
+    if (diffDays < 7) return `${diffDays}d ago`
+    
+    // Otherwise show full date and time
+    return date.toLocaleString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      year: date.getFullYear() !== now.getFullYear() ? 'numeric' : undefined,
+      hour: '2-digit',
+      minute: '2-digit'
+    })
+  } catch (e) {
+    return isoString
+  }
+}
+
 export default function EventsTable() {
   const [events, setEvents] = useState([])
   const [loading, setLoading] = useState(true)
@@ -58,7 +89,9 @@ export default function EventsTable() {
             <tbody>
               {events.map(ev => (
                 <tr key={ev.id}>
-                  <td style={{ fontFamily: 'monospace', fontSize: 12 }}>{ev.timestamp}</td>
+                  <td style={{ fontFamily: 'monospace', fontSize: 12 }} title={ev.timestamp}>
+                    {formatTimestamp(ev.timestamp)}
+                  </td>
                   <td style={{ color: 'var(--accent)' }}>{ev.camera_id}</td>
                   <td style={{ color: 'var(--text-primary)' }}>{ev.person_id}</td>
                   <td>{(ev.confidence * 100).toFixed(1)}%</td>

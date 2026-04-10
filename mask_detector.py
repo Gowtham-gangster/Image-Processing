@@ -105,24 +105,17 @@ class MaskDetector:
         """
         Lightweight heuristic:
           - Examine the lower half of the face.
-          - If the skin-tone pixel ratio is low (< 0.25), assume mask.
+          - If the skin-tone pixel ratio is very low, assume mask.
 
-        This is approximate and should be replaced with a proper model.
+        DISABLED: Too many false positives without a proper trained model.
+        Always returns False (no mask) until a proper model is trained.
         """
         if face_roi is None or face_roi.size == 0:
             return False, 0.0
 
-        h, w = face_roi.shape[:2]
-        lower_half = face_roi[h // 2:, :]          # bottom half
-
-        # Convert to YCrCb and apply skin-colour thresholds
-        ycrcb = cv2.cvtColor(lower_half, cv2.COLOR_BGR2YCrCb)
-        skin_mask = cv2.inRange(ycrcb, (0, 133, 77), (255, 173, 127))
-        skin_ratio = np.count_nonzero(skin_mask) / (skin_mask.size + 1e-6)
-
-        masked = skin_ratio < 0.25
-        confidence = 1.0 - skin_ratio if masked else skin_ratio
-        return masked, float(confidence)
+        # TEMPORARY: Disable heuristic mask detection due to high false positive rate
+        # Return no mask detected with low confidence
+        return False, 0.5
 
     @property
     def mode(self) -> str:

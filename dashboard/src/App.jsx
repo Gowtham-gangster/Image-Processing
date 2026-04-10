@@ -7,14 +7,16 @@ import PersonsManager from './pages/PersonsManager'
 import AlertHistory from './pages/AlertHistory'
 import AlertSettings from './pages/AlertSettings'
 import Analytics from './pages/Analytics'
+import CameraSettings from './pages/CameraSettings'
 
 const NAV = [
   { id: 'imagetest', label: 'Image Test', icon: <IconImage /> },
   { id: 'live', label: 'Live Feed', icon: <IconCamera /> },
+  { id: 'cameras', label: 'Camera Settings', icon: <IconSettings /> },
   { id: 'events', label: 'Event History', icon: <IconList /> },
   { id: 'persons', label: 'Persons', icon: <IconUsers /> },
   { id: 'alerthistory', label: 'Alert History', icon: <IconBell /> },
-  { id: 'alerts', label: 'Alert Config', icon: <IconSettings /> },
+  { id: 'alerts', label: 'Alert Config', icon: <IconCog /> },
   { id: 'analytics', label: 'Analytics', icon: <IconChart /> },
 ]
 
@@ -24,6 +26,7 @@ export default function App() {
   const currentPage = {
     imagetest: <ImageTest />,
     live: <LiveFeed />,
+    cameras: <CameraSettings />,
     events: <EventsTable />,
     persons: <PersonsManager />,
     alerthistory: <AlertHistory />,
@@ -51,7 +54,7 @@ export default function App() {
           ))}
         </nav>
         <div style={{ padding: '16px 20px', borderTop: '1px solid var(--border)' }}>
-          <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>API: localhost:8309</div>
+          <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>API: localhost:8000</div>
           <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>v3.0.0 · Phase 3</div>
         </div>
       </aside>
@@ -82,6 +85,9 @@ function IconChart() {
   return <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="20" x2="18" y2="10" /><line x1="12" y1="20" x2="12" y2="4" /><line x1="6" y1="20" x2="6" y2="14" /></svg>
 }
 function IconSettings() {
+  return <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="2" y="4" width="20" height="16" rx="2"/><circle cx="12" cy="12" r="3"/></svg>
+}
+function IconCog() {
   return <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-2 2 2 2 0 01-2-2v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83 0 2 2 0 010-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 01-2-2 2 2 0 012-2h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 010-2.83 2 2 0 012.83 0l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 012-2 2 2 0 012 2v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 0 2 2 0 010 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9a1.65 1.65 0 001.51 1H21a2 2 0 012 2 2 2 0 01-2 2h-.09a1.65 1.65 0 00-1.51 1z" /></svg>
 }
 function IconExperiment() {

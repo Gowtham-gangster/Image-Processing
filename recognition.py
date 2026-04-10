@@ -63,7 +63,7 @@ from config import (
 from database import PersonDatabase
 from detection import Detector, DetectionResult, draw_detections
 from embeddings import EmbeddingExtractor
-from train_model import load_model
+from scripts.train_model import load_model
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 logging.basicConfig(

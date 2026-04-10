@@ -56,11 +56,13 @@ logger = logging.getLogger(__name__)
 # ── Alert types ──────────────────────────────────────────────────────────────
 ALERT_UNKNOWN_PERSON = "unknown_person"
 ALERT_UNMASKED       = "unmasked_person"
+ALERT_MASKED         = "masked_person"
 ALERT_SPOOF          = "spoof_attempt"
 
 ALERT_LABELS = {
     ALERT_UNKNOWN_PERSON: "🚨 Unknown Person Detected",
     ALERT_UNMASKED:       "⚠️  Unmasked Person Detected",
+    ALERT_MASKED:         "😷 Masked Person Detected",
     ALERT_SPOOF:          "🎭 Spoof Attempt Detected",
 }
 
@@ -135,7 +137,7 @@ class AlertManager:
 
         Parameters
         ----------
-        alert_type  : One of ALERT_UNKNOWN_PERSON, ALERT_UNMASKED, ALERT_SPOOF.
+        alert_type  : One of ALERT_UNKNOWN_PERSON, ALERT_MASKED, ALERT_UNMASKED, ALERT_SPOOF.
         camera_id   : Camera identifier string.
         person_id   : Person identifier or 'Unknown Person'.
         confidence  : Recognition confidence / similarity.
@@ -184,7 +186,15 @@ class AlertManager:
     def _send_slack(self, payload: dict) -> None:
         url = self._config["slack_webhook_url"]
         label = payload["label"]
-        ts = payload["timestamp"]
+        
+        # Format timestamp to be more readable (convert to local time)
+        try:
+            dt = datetime.fromisoformat(payload['timestamp'].replace('Z', '+00:00'))
+            # Convert UTC to local time
+            local_dt = dt.astimezone()
+            formatted_time = local_dt.strftime("%B %d, %Y at %I:%M:%S %p")
+        except:
+            formatted_time = payload['timestamp']
 
         body = {
             "blocks": [
@@ -198,7 +208,7 @@ class AlertManager:
                         {"type": "mrkdwn", "text": f"*Camera:*\n{payload['camera_id']}"},
                         {"type": "mrkdwn", "text": f"*Person ID:*\n{payload['person_id']}"},
                         {"type": "mrkdwn", "text": f"*Confidence:*\n{payload['confidence']:.1%}"},
-                        {"type": "mrkdwn", "text": f"*Time (UTC):*\n{ts}"},
+                        {"type": "mrkdwn", "text": f"*Time:*\n{formatted_time}"},
                     ],
                 },
                 {"type": "divider"},
@@ -226,15 +236,24 @@ class AlertManager:
         if not recipients:
             return
 
+        # Format timestamp to be more readable (convert to local time)
+        try:
+            dt = datetime.fromisoformat(payload['timestamp'].replace('Z', '+00:00'))
+            # Convert UTC to local time
+            local_dt = dt.astimezone()
+            formatted_time = local_dt.strftime("%B %d, %Y at %I:%M:%S %p")
+        except:
+            formatted_time = payload['timestamp']
+
         subject = f"[MaskAwareID] {payload['label']} — {payload['camera_id']}"
         body_html = f"""
         <html><body style="font-family:sans-serif;background:#0f0f12;color:#e0e0e0;padding:20px">
         <h2 style="color:#ef4444">{payload['label']}</h2>
-        <table>
-          <tr><td><b>Camera</b></td><td>{payload['camera_id']}</td></tr>
-          <tr><td><b>Person ID</b></td><td>{payload['person_id']}</td></tr>
-          <tr><td><b>Confidence</b></td><td>{payload['confidence']:.1%}</td></tr>
-          <tr><td><b>Time (UTC)</b></td><td>{payload['timestamp']}</td></tr>
+        <table style="border-collapse:collapse;margin-top:20px">
+          <tr style="border-bottom:1px solid #333"><td style="padding:8px;color:#888"><b>Camera</b></td><td style="padding:8px">{payload['camera_id']}</td></tr>
+          <tr style="border-bottom:1px solid #333"><td style="padding:8px;color:#888"><b>Person ID</b></td><td style="padding:8px">{payload['person_id']}</td></tr>
+          <tr style="border-bottom:1px solid #333"><td style="padding:8px;color:#888"><b>Confidence</b></td><td style="padding:8px">{payload['confidence']:.1%}</td></tr>
+          <tr style="border-bottom:1px solid #333"><td style="padding:8px;color:#888"><b>Time</b></td><td style="padding:8px">{formatted_time}</td></tr>
         </table>
         </body></html>
         """

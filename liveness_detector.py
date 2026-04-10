@@ -97,12 +97,14 @@ class LivenessDetector:
                 blob    = np.expand_dims(blob, axis=0)
                 
                 score = self.model.predict(blob, verbose=0)[0][0]
-                if score < 0.5: # 0 = Spoof, 1 = Live
+                # Relaxed threshold: only flag as spoof if confidence is very high
+                if score < 0.3: # 0 = Spoof, 1 = Live (was 0.5, now 0.3 for less false positives)
                     return False, f"Spoof Detected (CNN Confidence: {1-score:.1%})"
 
             # --- 2. Laplacian Variance (Focus check) ---
             laplacian_var = cv2.Laplacian(gray, cv2.CV_64F).var()
-            if laplacian_var < self.blur_thresh:
+            # Relaxed blur threshold (was 65, now 40 for less false positives)
+            if laplacian_var < 40.0:
                 return False, f"Spoof Detected (Blurry Photo: {laplacian_var:.1f})"
                 
             # --- 3. LBP Texture Analysis (Depth check) ---

@@ -5,8 +5,40 @@ import { API } from '../config'
 function AlertBadge({ type }) {
   if (type === 'unknown_person') return <span className="badge unknown" style={{ backgroundColor: 'rgba(239, 68, 68, 0.2)', color: '#ef4444' }}>UNKNOWN</span>
   if (type === 'unmasked_person') return <span className="badge spoof" style={{ backgroundColor: 'rgba(245, 158, 11, 0.2)', color: '#f59e0b' }}>NO MASK</span>
+  if (type === 'masked_person') return <span className="badge masked" style={{ backgroundColor: 'rgba(59, 130, 246, 0.2)', color: '#3b82f6' }}>MASKED</span>
   if (type === 'spoof_attempt') return <span className="badge spoof" style={{ backgroundColor: 'rgba(239, 68, 68, 0.2)', color: '#ef4444' }}>SPOOF</span>
   return <span className="badge">{type}</span>
+}
+
+function formatTimestamp(isoString) {
+  try {
+    const date = new Date(isoString)
+    const now = new Date()
+    const diffMs = now - date
+    const diffMins = Math.floor(diffMs / 60000)
+    const diffHours = Math.floor(diffMs / 3600000)
+    const diffDays = Math.floor(diffMs / 86400000)
+    
+    // If less than 1 minute ago
+    if (diffMins < 1) return 'Just now'
+    // If less than 1 hour ago
+    if (diffMins < 60) return `${diffMins}m ago`
+    // If less than 24 hours ago
+    if (diffHours < 24) return `${diffHours}h ago`
+    // If less than 7 days ago
+    if (diffDays < 7) return `${diffDays}d ago`
+    
+    // Otherwise show full date and time
+    return date.toLocaleString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      year: date.getFullYear() !== now.getFullYear() ? 'numeric' : undefined,
+      hour: '2-digit',
+      minute: '2-digit'
+    })
+  } catch (e) {
+    return isoString
+  }
 }
 
 export default function AlertHistory() {
@@ -48,7 +80,7 @@ export default function AlertHistory() {
           <table className="data-table">
             <thead>
               <tr>
-                <th>Time (UTC)</th>
+                <th>Time</th>
                 <th>Alert Type</th>
                 <th>Camera Engine</th>
                 <th>Person ID</th>
@@ -58,7 +90,9 @@ export default function AlertHistory() {
             <tbody>
               {alerts.map(al => (
                 <tr key={al.id}>
-                  <td style={{ fontFamily: 'monospace', fontSize: 12 }}>{al.timestamp}</td>
+                  <td style={{ fontFamily: 'monospace', fontSize: 12 }} title={al.timestamp}>
+                    {formatTimestamp(al.timestamp)}
+                  </td>
                   <td><AlertBadge type={al.alert_type} /></td>
                   <td style={{ color: 'var(--accent)' }}>{al.camera_id}</td>
                   <td style={{ color: 'var(--text-primary)' }}>{al.person_id}</td>

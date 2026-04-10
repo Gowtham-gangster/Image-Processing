@@ -1,0 +1,37 @@
+{
+  "cameras": [
+    {
+      "id": "CAM001",
+      "name": "System Webcam",
+      "type": "local",
+      "source": 0,
+      "enabled": true,
+      "location": "Local System",
+      "description": "Integrated system camera (temporary)"
+    },
+    {
+      "id": "CAM002",
+      "name": "Entrance Gate Camera",
+      "type": "rtsp",
+      "source": "rtsp://192.168.1.6:554/stream1",
+      "enabled": true,
+      "location": "ENTRANCE",
+      "description": "TP-Link Tapo C320WS at entrance gate",
+      "device_id": "C320WS-EntranceGate",
+      "mac_address": "3C:52:A1:D9:B4:03",
+      "serial_number": "C320WS-HW2.6-FW1.5.3"
+    },
+    {
+      "id": "CAM003",
+      "name": "CCTV Camera 2",
+      "type": "rtsp",
+      "source": "rtsp://admin:password@192.168.1.101:554/stream",
+      "enabled": false,
+      "location": "Parking Area",
+      "description": "CCTV camera at parking area",
+      "device_id": "",
+      "mac_address": "",
+      "serial_number": ""
+    }
+  ]
+}

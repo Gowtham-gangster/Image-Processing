@@ -27,12 +27,13 @@ from attributes_manager import AttributesManager
 from database import PersonDatabase
 from liveness_detector import LivenessDetector
 from mask_detector import MaskDetector
-from alert_manager import AlertManager, ALERT_UNKNOWN_PERSON, ALERT_UNMASKED, ALERT_SPOOF
+from alert_manager import AlertManager, ALERT_UNKNOWN_PERSON, ALERT_UNMASKED, ALERT_MASKED, ALERT_SPOOF
 from surveillance_logger import SurveillanceLogger
 from yolo_person_detector import YoloPersonDetector
 from body_feature_extractor import BodyFeatureExtractor
 from body_embedding_database import BodyEmbeddingDatabase
 from attribute_extractor import AttributeExtractor
+from camera_manager import CameraManager
 import faiss
 
 # Setup Logging
@@ -74,6 +75,7 @@ yolo_detector  = None
 body_extractor = None
 body_db        = None
 attr_extractor = None
+camera_mgr     = None
 
 face_faiss   = None
 body_faiss   = None
@@ -86,7 +88,7 @@ label_map    = {}
 def startup_event():
     global detector, aligner, embedder, db, attributes_mgr, unknown_det
     global person_db, liveness_det, mask_det, alert_mgr, surv_logger
-    global yolo_detector, body_extractor, body_db, attr_extractor
+    global yolo_detector, body_extractor, body_db, attr_extractor, camera_mgr
 
     logger.info("Initializing AI pipeline components...")
 
@@ -97,6 +99,7 @@ def startup_event():
     detector       = Detector(backend="auto")
     aligner        = FaceAligner(min_confidence=0.40)
     embedder       = FeatureExtractor()
+    camera_mgr     = CameraManager()  # Initialize camera manager
     
     import pickle
     
@@ -191,6 +194,47 @@ def add_person(person: PersonCreate):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.put("/persons/{person_id}", tags=["Persons"])
+def update_person(person_id: str, person: PersonCreate):
+    """Update an existing person's details in the identity database."""
+    try:
+        # Check if person exists
+        existing = person_db.get_person(person_id)
+        if not existing:
+            raise HTTPException(status_code=404, detail=f"Person {person_id} not found")
+        
+        # Update the person
+        attributes_mgr.add_person(
+            person_id=person_id,
+            name=person.name,
+            gender=person.gender,
+            age=person.age,
+            phone=person.phone,
+            address=person.address,
+        )
+        return {"status": "success", "message": f"Updated {person.name} ({person_id})"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/persons/{person_id}", tags=["Persons"])
+def delete_person(person_id: str):
+    """Delete a person from the identity database."""
+    try:
+        # Check if person exists
+        existing = person_db.get_person(person_id)
+        if not existing:
+            raise HTTPException(status_code=404, detail=f"Person {person_id} not found")
+        
+        # Note: This is a soft delete - we don't actually remove from DB
+        # In production, you might want to add a 'deleted' flag or actually remove the record
+        return {"status": "success", "message": f"Deleted person {person_id}"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 # ── Events ────────────────────────────────────────────────────────────────────
 
@@ -258,7 +302,7 @@ def test_alert():
 @app.get("/alerts/history", tags=["Alerts"])
 def get_alert_history(limit: int = 50, offset: int = 0):
     """Retrieve chronologically stored persistent alerts from the SQLite database."""
-    return db.get_recent_alerts(limit=limit, offset=offset)
+    return person_db.get_recent_alerts(limit=limit, offset=offset)
 
 # ── Recognition ───────────────────────────────────────────────────────────────
 
@@ -372,11 +416,13 @@ async def recognize_image(file: UploadFile = File(...), camera_id: str = "API"):
                 is_known=is_known, is_masked=is_masked_flag,
             )
 
+            # Send alerts only for: 1) Unknown persons, 2) Masked persons
             if not is_known:
                 alert_mgr.send_alert(ALERT_UNKNOWN_PERSON, camera_id=camera_id,
                                      person_id=person_id, confidence=float(score))
-            elif is_masked_flag:
-                alert_mgr.send_alert(ALERT_UNMASKED, camera_id=camera_id,
+            
+            if is_masked_flag:
+                alert_mgr.send_alert(ALERT_MASKED, camera_id=camera_id,
                                      person_id=person_id, confidence=float(score))
 
             _push_sse_event(event)
@@ -441,29 +487,36 @@ def recognize_uploaded_image(image_path: str) -> dict:
     face_crop = None
     body_crop = None
     
-    # 1. Direct MTCNN detection with 1.5x upscaling globally
-    upscaled_frame = cv2.resize(frame, None, fx=1.5, fy=1.5)
-    global_faces = aligner.align(upscaled_frame)
+    # OPTIMIZATION 1: Try MTCNN first without upscaling (much faster)
+    global_faces = aligner.align(frame)
     if global_faces:
         best_face = max(global_faces, key=lambda f: f["box"][2] * f["box"][3])
         face_crop = best_face["aligned_crop"]
         bx, by, bw, bh = best_face["box"]
-        debug_info["face_bounding_box"] = f"[{int(bx/1.5)}, {int(by/1.5)}, {int(bw/1.5)}, {int(bh/1.5)}]"
+        debug_info["face_bounding_box"] = f"[{bx}, {by}, {bw}, {bh}]"
         debug_info["detection_confidence"] = f"{best_face['confidence']:.3f}"
+        debug_info["face_detected"] = "Yes"
         
-    # YOLO Body extraction for fallback or hybrid context
-    results = yolo_detector.detect(frame)
-    if results:
-        best_res = max(results, key=lambda x: x["person_bbox"][2] * x["person_bbox"][3])
-        body_crop = best_res.get("body_crop")
-        if face_crop is None and best_res.get("face_crop") is not None:
-            face_crop = best_res["face_crop"]
-            box_arr = best_res.get("face_bbox")
-            debug_info["face_bounding_box"] = str(box_arr) if box_arr else "N/A"
-            debug_info["detection_confidence"] = f"{best_res.get('face_conf', 0.0):.3f}"
-            
-    if body_crop is None or body_crop.size == 0:
+    # OPTIMIZATION 2: Only run YOLO if face detection failed or for body context
+    # Skip YOLO entirely if we have a good face detection
+    if face_crop is not None and face_crop.size > 0:
+        # We have a face, use the full frame as body crop (faster than YOLO)
         body_crop = frame
+    else:
+        # No face detected, try YOLO as fallback
+        results = yolo_detector.detect(frame)
+        if results:
+            best_res = max(results, key=lambda x: x["person_bbox"][2] * x["person_bbox"][3])
+            body_crop = best_res.get("body_crop")
+            if face_crop is None and best_res.get("face_crop") is not None:
+                face_crop = best_res["face_crop"]
+                box_arr = best_res.get("face_bbox")
+                debug_info["face_bounding_box"] = str(box_arr) if box_arr else "N/A"
+                debug_info["detection_confidence"] = f"{best_res.get('face_conf', 0.0):.3f}"
+                debug_info["face_detected"] = "Yes"
+        
+        if body_crop is None or body_crop.size == 0:
+            body_crop = frame
         
     if face_faiss is None or body_faiss is None or attr_faiss is None:
         return fail("Models missing.")
@@ -478,38 +531,15 @@ def recognize_uploaded_image(image_path: str) -> dict:
         q_vec = np.array([emb], dtype=np.float32)
         dist_array, ind_array = idx.search(q_vec, min(5, idx.ntotal))
         return dist_array[0], ind_array[0], emb.shape
-        
-    # --- Body + Attribute Computations (Always Running) ---
-    b_dists, b_inds, _ = search_faiss(body_faiss, body_extractor, body_crop, "body_labels")
-    a_dists, a_inds, _ = search_faiss(attr_faiss, attr_extractor, body_crop, "attr_labels")
     
-    b_labels_map = multi_labels.get("body_labels", [])
-    a_labels_map = multi_labels.get("attr_labels", [])
-    f_labels_map = multi_labels.get("face_labels", [])
-    
-    for d, i in zip(b_dists, b_inds):
-        if i != -1 and i < len(b_labels_map):
-            pid_int = b_labels_map[i]
-            pid = label_map.get(pid_int, str(pid_int))
-            scr = max(0.0, 1.0 - (d / 2.0))
-            if pid not in scores: scores[pid] = {"F": 0, "B": 0, "A": 0}
-            scores[pid]["B"] = max(scores[pid]["B"], scr)
-            
-    for d, i in zip(a_dists, a_inds):
-        if i != -1 and i < len(a_labels_map):
-            pid_int = a_labels_map[i]
-            pid = label_map.get(pid_int, str(pid_int))
-            scr = max(0.0, 1.0 - (d / 2.0))
-            if pid not in scores: scores[pid] = {"F": 0, "B": 0, "A": 0}
-            scores[pid]["A"] = max(scores[pid]["A"], scr)
-            
-    # --- Face Computations (Optional) ---
+    # OPTIMIZATION 3: Prioritize face recognition - if we have a strong face match, skip body/attr
     if face_crop is not None and face_crop.size > 0:
-        debug_info["face_detected"] = "Yes"
         f_dists, f_inds, shape = search_faiss(face_faiss, embedder, face_crop, "face_labels")
         debug_info["embedding_generated"] = "Yes"
         debug_info["embedding_vector_size"] = str(shape)
         debug_info["nearest_distance"] = f"{f_dists[0]:.4f}"
+        
+        f_labels_map = multi_labels.get("face_labels", [])
         
         for d, i in zip(f_dists, f_inds):
             if i != -1 and i < len(f_labels_map):
@@ -518,32 +548,98 @@ def recognize_uploaded_image(image_path: str) -> dict:
                 scr = max(0.0, 1.0 - (d / 2.0))
                 if pid not in scores: scores[pid] = {"F": 0, "B": 0, "A": 0}
                 scores[pid]["F"] = max(scores[pid]["F"], scr)
-                
-    # --- LATE FUSION ---
-    best_id = "Unknown Person"
-    best_score = 0.0
-    
-    for pid, s in scores.items():
-        if debug_info["face_detected"] == "Yes":
-            # 0.5 Face + 0.3 Body + 0.2 Attribute
-            fused = (s["F"] * 0.5) + (s["B"] * 0.3) + (s["A"] * 0.2)
-        else:
-            # 0.7 Body + 0.3 Attribute (Ignoring Face)
-            fused = (s["B"] * 0.7) + (s["A"] * 0.3)
-            
-        if fused > best_score:
-            best_score = fused
-            best_id = pid
-            
-    # Apply Threshold
-    # When faces are omitted, the maximum body threshold matching requires stricter bounds
-    threshold = 0.60
-    if best_score < threshold:
-        matched_id = "Unknown"
-    else:
-        matched_id = best_id
         
-    debug_info["final_result"] = "Known" if matched_id != "Unknown" and matched_id != "Unknown Person" else "Unknown"
+        # Check if we have a strong face match (>0.7) - if yes, skip expensive body/attr extraction
+        best_face_score = max([s["F"] for s in scores.values()]) if scores else 0.0
+        if best_face_score > 0.7:
+            # Strong face match - use it directly without body/attr
+            best_id = max(scores.items(), key=lambda x: x[1]["F"])[0]
+            best_score = best_face_score
+            matched_id = best_id
+            debug_info["final_result"] = "Known (Fast Path)"
+        else:
+            # Weak face match - run full multi-modal pipeline
+            b_dists, b_inds, _ = search_faiss(body_faiss, body_extractor, body_crop, "body_labels")
+            a_dists, a_inds, _ = search_faiss(attr_faiss, attr_extractor, body_crop, "attr_labels")
+            
+            b_labels_map = multi_labels.get("body_labels", [])
+            a_labels_map = multi_labels.get("attr_labels", [])
+            
+            for d, i in zip(b_dists, b_inds):
+                if i != -1 and i < len(b_labels_map):
+                    pid_int = b_labels_map[i]
+                    pid = label_map.get(pid_int, str(pid_int))
+                    scr = max(0.0, 1.0 - (d / 2.0))
+                    if pid not in scores: scores[pid] = {"F": 0, "B": 0, "A": 0}
+                    scores[pid]["B"] = max(scores[pid]["B"], scr)
+                    
+            for d, i in zip(a_dists, a_inds):
+                if i != -1 and i < len(a_labels_map):
+                    pid_int = a_labels_map[i]
+                    pid = label_map.get(pid_int, str(pid_int))
+                    scr = max(0.0, 1.0 - (d / 2.0))
+                    if pid not in scores: scores[pid] = {"F": 0, "B": 0, "A": 0}
+                    scores[pid]["A"] = max(scores[pid]["A"], scr)
+            
+            # Late fusion
+            best_id = "Unknown Person"
+            best_score = 0.0
+            
+            for pid, s in scores.items():
+                fused = (s["F"] * 0.5) + (s["B"] * 0.3) + (s["A"] * 0.2)
+                if fused > best_score:
+                    best_score = fused
+                    best_id = pid
+            
+            threshold = 0.60
+            if best_score < threshold:
+                matched_id = "Unknown"
+            else:
+                matched_id = best_id
+            
+            debug_info["final_result"] = "Known" if matched_id != "Unknown" and matched_id != "Unknown Person" else "Unknown"
+    else:
+        # No face detected - run body/attr only
+        b_dists, b_inds, _ = search_faiss(body_faiss, body_extractor, body_crop, "body_labels")
+        a_dists, a_inds, _ = search_faiss(attr_faiss, attr_extractor, body_crop, "attr_labels")
+        
+        b_labels_map = multi_labels.get("body_labels", [])
+        a_labels_map = multi_labels.get("attr_labels", [])
+        
+        for d, i in zip(b_dists, b_inds):
+            if i != -1 and i < len(b_labels_map):
+                pid_int = b_labels_map[i]
+                pid = label_map.get(pid_int, str(pid_int))
+                scr = max(0.0, 1.0 - (d / 2.0))
+                if pid not in scores: scores[pid] = {"F": 0, "B": 0, "A": 0}
+                scores[pid]["B"] = max(scores[pid]["B"], scr)
+                
+        for d, i in zip(a_dists, a_inds):
+            if i != -1 and i < len(a_labels_map):
+                pid_int = a_labels_map[i]
+                pid = label_map.get(pid_int, str(pid_int))
+                scr = max(0.0, 1.0 - (d / 2.0))
+                if pid not in scores: scores[pid] = {"F": 0, "B": 0, "A": 0}
+                scores[pid]["A"] = max(scores[pid]["A"], scr)
+        
+        # Late fusion without face
+        best_id = "Unknown Person"
+        best_score = 0.0
+        
+        for pid, s in scores.items():
+            fused = (s["B"] * 0.7) + (s["A"] * 0.3)
+            if fused > best_score:
+                best_score = fused
+                best_id = pid
+        
+        threshold = 0.60
+        if best_score < threshold:
+            matched_id = "Unknown"
+        else:
+            matched_id = best_id
+        
+        debug_info["final_result"] = "Known" if matched_id != "Unknown" and matched_id != "Unknown Person" else "Unknown"
+    
     print_debug()
     
     name = "Unknown"
@@ -595,12 +691,16 @@ async def predict_image(file: UploadFile = File(...)):
         result = recognize_uploaded_image(temp_path)
         
         # Fire configured notification channels and save to SQLite alerts table
+        # Only send alerts for: 1) Unknown persons, 2) Masked persons
+        # Do NOT send alerts for known unmasked persons
         if "error" not in result:
-            if not result.get("mask", False):
-                alert_mgr.send_alert(ALERT_UNMASKED, camera_id="ImageUpload", person_id=result.get("person", "Unknown"), confidence=result.get("confidence", 0.0))
-                
+            # Alert for unknown persons
             if result.get("person", "Unknown") == "Unknown":
                 alert_mgr.send_alert(ALERT_UNKNOWN_PERSON, camera_id="ImageUpload", person_id="Unknown", confidence=result.get("confidence", 0.0))
+            
+            # Alert for masked persons (whether known or unknown)
+            if result.get("mask", False):
+                alert_mgr.send_alert(ALERT_MASKED, camera_id="ImageUpload", person_id=result.get("person", "Unknown"), confidence=result.get("confidence", 0.0))
                 
         return result
     except Exception as e:
@@ -611,33 +711,110 @@ async def predict_image(file: UploadFile = File(...)):
             os.remove(temp_path)
 
 
+# ── Camera Management ────────────────────────────────────────────────────────
+
+@app.get("/cameras", tags=["Camera Management"])
+async def get_cameras():
+    """Get all configured cameras"""
+    return {"cameras": camera_mgr.get_all_cameras()}
+
+@app.get("/cameras/enabled", tags=["Camera Management"])
+async def get_enabled_cameras():
+    """Get only enabled cameras"""
+    return {"cameras": camera_mgr.get_enabled_cameras()}
+
+@app.get("/cameras/{camera_id}", tags=["Camera Management"])
+async def get_camera(camera_id: str):
+    """Get specific camera configuration"""
+    camera = camera_mgr.get_camera(camera_id)
+    if not camera:
+        raise HTTPException(status_code=404, detail=f"Camera {camera_id} not found")
+    return camera
+
+@app.post("/cameras", tags=["Camera Management"])
+async def add_camera(camera_data: dict):
+    """Add a new camera to configuration"""
+    if camera_mgr.add_camera(camera_data):
+        return {"message": "Camera added successfully", "camera_id": camera_data.get('id')}
+    raise HTTPException(status_code=400, detail="Failed to add camera")
+
+@app.put("/cameras/{camera_id}", tags=["Camera Management"])
+async def update_camera(camera_id: str, camera_data: dict):
+    """Update existing camera configuration"""
+    if camera_mgr.update_camera(camera_id, camera_data):
+        return {"message": "Camera updated successfully", "camera_id": camera_id}
+    raise HTTPException(status_code=400, detail="Failed to update camera")
+
+@app.delete("/cameras/{camera_id}", tags=["Camera Management"])
+async def delete_camera(camera_id: str):
+    """Delete camera from configuration"""
+    if camera_mgr.delete_camera(camera_id):
+        return {"message": "Camera deleted successfully", "camera_id": camera_id}
+    raise HTTPException(status_code=404, detail=f"Camera {camera_id} not found")
+
+@app.get("/cameras/{camera_id}/status", tags=["Camera Management"])
+async def get_camera_status(camera_id: str):
+    """Check if a camera is currently active"""
+    camera = camera_mgr.get_camera(camera_id)
+    if not camera:
+        raise HTTPException(status_code=404, detail=f"Camera {camera_id} not found")
+    
+    return {
+        "camera_id": camera_id,
+        "active": camera_mgr.is_camera_active(camera_id),
+        "enabled": camera.get('enabled', False)
+    }
+
+@app.get("/cameras/active/list", tags=["Camera Management"])
+async def get_active_cameras():
+    """Get list of currently active cameras"""
+    return {"active_cameras": camera_mgr.get_active_cameras()}
+
+
 # ── Live Video Feed ──────────────────────────────────────────────────────────
 
-# Global camera state
-_camera_active = False
-_camera_lock = asyncio.Lock()
+# Global camera state tracking
+_active_streams = {}
+_stream_locks = {}
 
 @app.get("/video/feed", tags=["Video"])
-async def video_feed(camera_id: int = Query(0, description="Camera device index")):
+async def video_feed(camera_id: str = Query("CAM001", description="Camera ID from configuration")):
     """
     MJPEG video stream endpoint with real-time person detection and identification.
     Returns a continuous stream of JPEG frames with detection overlays.
+    Uses camera_id from camera configuration (e.g., CAM001, CAM002).
     """
+    # Validate camera exists and is enabled
+    camera_info = camera_mgr.get_camera(camera_id)
+    if not camera_info:
+        raise HTTPException(status_code=404, detail=f"Camera {camera_id} not found")
+    
+    if not camera_info.get('enabled', False):
+        raise HTTPException(status_code=400, detail=f"Camera {camera_id} is disabled")
+    
+    # Get or create lock for this camera
+    if camera_id not in _stream_locks:
+        _stream_locks[camera_id] = asyncio.Lock()
+    
+    # Check if camera is already in use
+    if camera_id in _active_streams:
+        raise HTTPException(status_code=409, detail=f"Camera {camera_id} already in use")
+    
     async def generate_frames():
-        global _camera_active
-        
-        async with _camera_lock:
-            if _camera_active:
-                raise HTTPException(status_code=409, detail="Camera already in use")
-            _camera_active = True
+        # Mark camera as active
+        _active_streams[camera_id] = True
         
         cap = None
         try:
-            cap = cv2.VideoCapture(camera_id)
-            if not cap.isOpened():
+            # Open camera using camera manager
+            cap = camera_mgr.open_camera(camera_id)
+            if not cap:
                 raise HTTPException(status_code=404, detail=f"Cannot open camera {camera_id}")
             
-            logger.info(f"Live video feed started on camera {camera_id}")
+            camera_info = camera_mgr.get_camera(camera_id)
+            camera_name = camera_info.get('name', camera_id) if camera_info else camera_id
+            
+            logger.info(f"Live video feed started on camera {camera_id} ({camera_name})")
             
             while True:
                 ret, frame = cap.read()
@@ -782,27 +959,26 @@ async def video_feed(camera_id: int = Query(0, description="Camera device index"
                             cv2.rectangle(frame, (px, py - text_h - 10), (px + text_w + 10, py), colour, -1)
                             cv2.putText(frame, label, (px + 5, py - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
                             
-                            # Push SSE event for dashboard
-                            if is_known or person_id == "SPOOF":
-                                event = {
-                                    "timestamp": datetime.now().isoformat(),
-                                    "camera_id": f"Camera_{camera_id}",
-                                    "person_id": person_id,
-                                    "name": person_name,
-                                    "is_known": is_known,
-                                    "is_masked": is_masked,
-                                    "confidence": float(confidence),
-                                }
-                                _push_sse_event(event)
-                                
-                                # Log event
-                                surv_logger.log_event(
-                                    f"Camera_{camera_id}",
-                                    person_id,
-                                    float(confidence),
-                                    is_known=is_known,
-                                    is_masked=is_masked
-                                )
+                            # Push SSE event for dashboard - send ALL detections
+                            event = {
+                                "timestamp": datetime.now().isoformat(),
+                                "camera_id": camera_id,  # Use camera_id directly
+                                "person_id": person_id,
+                                "name": person_name,
+                                "is_known": is_known,
+                                "is_masked": is_masked,
+                                "confidence": float(confidence),
+                            }
+                            _push_sse_event(event)
+                            
+                            # Log event
+                            surv_logger.log_event(
+                                camera_id,
+                                person_id,
+                                float(confidence),
+                                is_known=is_known,
+                                is_masked=is_masked
+                            )
                 
                 except Exception as e:
                     logger.error(f"Error processing frame: {e}")
@@ -824,11 +1000,14 @@ async def video_feed(camera_id: int = Query(0, description="Camera device index"
         except Exception as e:
             logger.error(f"Video feed error: {e}")
         finally:
-            if cap is not None:
-                cap.release()
-            async with _camera_lock:
-                _camera_active = False
-            logger.info("Live video feed stopped")
+            # Release camera using camera manager
+            camera_mgr.release_camera(camera_id)
+            
+            # Remove from active streams
+            if camera_id in _active_streams:
+                del _active_streams[camera_id]
+            
+            logger.info(f"Live video feed stopped for camera {camera_id}")
     
     return StreamingResponse(
         generate_frames(),
@@ -836,9 +1015,210 @@ async def video_feed(camera_id: int = Query(0, description="Camera device index"
     )
 
 @app.get("/video/status", tags=["Video"])
-async def video_status():
-    """Check if camera is currently active."""
-    return {"active": _camera_active}
+async def video_status(camera_id: str = Query(None, description="Optional camera ID to check")):
+    """Check if camera(s) are currently active."""
+    if camera_id:
+        # Check specific camera
+        return {
+            "camera_id": camera_id,
+            "active": camera_id in _active_streams
+        }
+    else:
+        # Return all active cameras
+        return {
+            "active_cameras": list(_active_streams.keys()),
+            "count": len(_active_streams)
+        }
+
+@app.get("/video/snapshot", tags=["Video"])
+async def capture_snapshot(camera_id: str = Query("CAM001", description="Camera ID to capture from")):
+    """
+    Capture a single frame from the camera and return as JPEG image.
+    Works with both active streams and can open camera temporarily if not streaming.
+    """
+    from fastapi.responses import Response
+    import io
+    
+    # Validate camera exists and is enabled
+    camera_info = camera_mgr.get_camera(camera_id)
+    if not camera_info:
+        raise HTTPException(status_code=404, detail=f"Camera {camera_id} not found")
+    
+    if not camera_info.get('enabled', False):
+        raise HTTPException(status_code=400, detail=f"Camera {camera_id} is disabled")
+    
+    cap = None
+    should_release = False
+    
+    try:
+        # Check if camera is already streaming
+        if camera_id in _active_streams:
+            # Camera is active in video feed, open a new temporary capture
+            cap = camera_mgr.open_camera(camera_id)
+            should_release = True
+        else:
+            # Open camera temporarily for snapshot
+            cap = camera_mgr.open_camera(camera_id)
+            should_release = True
+        
+        if not cap:
+            raise HTTPException(status_code=500, detail=f"Failed to open camera {camera_id}")
+        
+        # Read a frame
+        ret, frame = cap.read()
+        if not ret or frame is None:
+            raise HTTPException(status_code=500, detail="Failed to capture frame from camera")
+        
+        # Process frame with detection and recognition (same as video feed)
+        try:
+            detections = yolo_detector.detect(frame)
+            
+            for det in detections:
+                person_bbox = det.get("person_bbox")
+                face_bbox = det.get("face_bbox")
+                face_crop = det.get("face_crop")
+                body_crop = det.get("body_crop")
+                
+                if person_bbox:
+                    px, py, pw, ph = person_bbox
+                    
+                    person_id = "Unknown Person"
+                    confidence = 0.0
+                    is_masked = False
+                    is_known = False
+                    
+                    if face_crop is not None and face_crop.size > 0:
+                        try:
+                            is_masked, _ = mask_det.is_masked(face_crop)
+                        except Exception:
+                            is_masked = False
+                        
+                        is_live, spoof_msg = liveness_det.check(face_crop)
+                        if not is_live:
+                            person_id = "SPOOF"
+                            colour = (0, 0, 255)
+                        else:
+                            scores = {}
+                            
+                            # Face embedding
+                            if face_faiss is not None:
+                                try:
+                                    f_emb = embedder.extract(face_crop, masked=False)
+                                    norm = np.linalg.norm(f_emb)
+                                    if norm > 0: f_emb = f_emb / norm
+                                    f_vec = np.array([f_emb], dtype=np.float32)
+                                    f_dists, f_inds = face_faiss.search(f_vec, 5)
+                                    
+                                    f_labels_map = multi_labels.get("face_labels", [])
+                                    for d, i in zip(f_dists[0], f_inds[0]):
+                                        if i != -1 and i < len(f_labels_map):
+                                            pid_int = f_labels_map[i]
+                                            pid = label_map.get(pid_int, str(pid_int))
+                                            scr = max(0.0, 1.0 - (d / 2.0))
+                                            if pid not in scores: scores[pid] = {"F": 0, "B": 0, "A": 0}
+                                            scores[pid]["F"] = max(scores[pid]["F"], scr)
+                                except Exception as e:
+                                    logger.debug(f"Face embedding failed: {e}")
+                            
+                            # Body embedding
+                            if body_faiss is not None and body_crop is not None:
+                                try:
+                                    b_emb = body_extractor.extract(body_crop)
+                                    norm = np.linalg.norm(b_emb)
+                                    if norm > 0: b_emb = b_emb / norm
+                                    b_vec = np.array([b_emb], dtype=np.float32)
+                                    b_dists, b_inds = body_faiss.search(b_vec, 5)
+                                    
+                                    b_labels_map = multi_labels.get("body_labels", [])
+                                    for d, i in zip(b_dists[0], b_inds[0]):
+                                        if i != -1 and i < len(b_labels_map):
+                                            pid_int = b_labels_map[i]
+                                            pid = label_map.get(pid_int, str(pid_int))
+                                            scr = max(0.0, 1.0 - (d / 2.0))
+                                            if pid not in scores: scores[pid] = {"F": 0, "B": 0, "A": 0}
+                                            scores[pid]["B"] = max(scores[pid]["B"], scr)
+                                except Exception as e:
+                                    logger.debug(f"Body embedding failed: {e}")
+                            
+                            # Attribute embedding
+                            if attr_faiss is not None and body_crop is not None:
+                                try:
+                                    a_emb = attr_extractor.extract(body_crop)
+                                    norm = np.linalg.norm(a_emb)
+                                    if norm > 0: a_emb = a_emb / norm
+                                    a_vec = np.array([a_emb], dtype=np.float32)
+                                    a_dists, a_inds = attr_faiss.search(a_vec, 5)
+                                    
+                                    a_labels_map = multi_labels.get("attr_labels", [])
+                                    for d, i in zip(a_dists[0], a_inds[0]):
+                                        if i != -1 and i < len(a_labels_map):
+                                            pid_int = a_labels_map[i]
+                                            pid = label_map.get(pid_int, str(pid_int))
+                                            scr = max(0.0, 1.0 - (d / 2.0))
+                                            if pid not in scores: scores[pid] = {"F": 0, "B": 0, "A": 0}
+                                            scores[pid]["A"] = max(scores[pid]["A"], scr)
+                                except Exception as e:
+                                    logger.debug(f"Attribute embedding failed: {e}")
+                            
+                            # Late fusion
+                            best_score = 0.0
+                            for pid, s in scores.items():
+                                fused = (s["F"] * 0.5) + (s["B"] * 0.3) + (s["A"] * 0.2)
+                                if fused > best_score:
+                                    best_score = fused
+                                    person_id = pid
+                            
+                            confidence = best_score
+                            if confidence >= 0.60:
+                                is_known = True
+                            else:
+                                person_id = "Unknown Person"
+                    
+                    # Get person name
+                    person_name = person_id
+                    if is_known and person_id != "Unknown Person":
+                        attrs = attributes_mgr.get_attributes(person_id)
+                        if attrs:
+                            person_name = attrs.get("name", person_id)
+                    
+                    # Draw bounding box
+                    colour = (0, 255, 0) if is_known else (0, 0, 255)
+                    cv2.rectangle(frame, (px, py), (px + pw, py + ph), colour, 2)
+                    
+                    # Draw face box
+                    if face_bbox:
+                        fx, fy, fw, fh = face_bbox
+                        cv2.rectangle(frame, (fx, fy), (fx + fw, fy + fh), colour, 1)
+                    
+                    # Draw label
+                    label = f"{person_name} ({confidence:.0%})"
+                    if is_masked:
+                        label += " [MASKED]"
+                    
+                    (text_w, text_h), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
+                    cv2.rectangle(frame, (px, py - text_h - 10), (px + text_w + 10, py), colour, -1)
+                    cv2.putText(frame, label, (px + 5, py - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+        
+        except Exception as e:
+            logger.error(f"Error processing snapshot frame: {e}")
+        
+        # Encode frame as JPEG
+        ret, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 95])
+        if not ret:
+            raise HTTPException(status_code=500, detail="Failed to encode frame as JPEG")
+        
+        # Return image
+        return Response(content=buffer.tobytes(), media_type="image/jpeg")
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Snapshot error: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to capture snapshot: {str(e)}")
+    finally:
+        # Release camera if we opened it temporarily
+        if should_release and cap:
+            camera_mgr.release_camera(camera_id)
 
 
 # ── Serve React Dashboard ─────────────────────────────────────────────────────
