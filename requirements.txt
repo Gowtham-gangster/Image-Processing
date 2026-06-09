@@ -14,3 +14,4 @@ pydantic
 scikit-image
 pillow
 mtcnn
+torch --index-url https://download.pytorch.org/whl/cpu

@@ -1,9 +1,20 @@
 import os
 import sys
 
-# Prevent OpenMP segmentation faults when loading TensorFlow (MTCNN) and PyTorch (YOLO) together
+# ── Critical: Set these BEFORE any ML library loads ───────────────────────────
+# On Linux, if TensorFlow loads its OpenMP first, PyTorch's OpenMP will conflict
+# causing a Segmentation fault. KMP_DUPLICATE_LIB_OK allows both to coexist.
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 os.environ["OMP_NUM_THREADS"] = "1"
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"  # Suppress TF startup noise
+
+# ── Force PyTorch to load FIRST before TensorFlow ─────────────────────────────
+# PyTorch (used by YOLO) must initialize its OpenMP instance before TF loads.
+# If TF loads first, PyTorch's second OpenMP instance causes a segfault on Linux.
+try:
+    import torch  # noqa: F401 - intentional pre-load
+except ImportError:
+    pass  # torch not installed, will fail later with a clearer error
 
 import asyncio
 import json
@@ -103,6 +114,17 @@ def startup_event():
     
     person_db      = PersonDatabase()
     attributes_mgr = AttributesManager(db=person_db)
+    
+    # ── Load PyTorch-based models FIRST (before TensorFlow) ───────────────────
+    # This ensures PyTorch's OpenMP is the primary instance on Linux,
+    # preventing the segfault when MTCNN (TF) loads afterwards.
+    logger.info("Pre-loading PyTorch/YOLO before TensorFlow to prevent OpenMP conflict...")
+    body_extractor = BodyFeatureExtractor()
+    attr_extractor = AttributeExtractor()
+    # YoloPersonDetector will be initialized after aligner is ready (needs it as arg)
+    # but we pre-warm torch here via body/attr extractors.
+    
+    # ── Now load TensorFlow-based models ─────────────────────────────────────
     detector       = Detector(backend="auto")
     aligner        = FaceAligner(min_confidence=0.40)
     embedder       = FeatureExtractor()
@@ -141,10 +163,9 @@ def startup_event():
     alert_mgr      = AlertManager()
     surv_logger    = SurveillanceLogger()
     
+    # YoloPersonDetector initialized last since aligner is now available
     yolo_detector  = YoloPersonDetector(aligner=aligner)
-    body_extractor = BodyFeatureExtractor()
     body_db        = BodyEmbeddingDatabase()
-    attr_extractor = AttributeExtractor()
 
     logger.info("AI pipeline successfully initialized.")
 
