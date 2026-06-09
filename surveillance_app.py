@@ -23,6 +23,9 @@ import sys
 import time
 
 import cv2
+import os
+
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), 'core')))
 
 from config import CAMERA_SOURCE, LOG_LEVEL, LOGS_DIR, LOG_FILE
 from database import PersonDatabase

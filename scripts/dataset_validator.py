@@ -31,6 +31,9 @@ import logging
 from typing import Dict, Any, List
 
 import cv2
+import sys
+
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'core')))
 
 from config import DATASET_DIR, TRAIN_DIR, TEST_DIR, LOG_LEVEL
 

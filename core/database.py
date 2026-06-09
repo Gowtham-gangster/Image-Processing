@@ -9,7 +9,10 @@ import os
 import sqlite3
 import logging
 import numpy as np
-DATABASE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "database")
+
+# Allow overriding the base directory for persistent volume mounts (e.g., Railway)
+BASE_DATA_DIR = os.getenv("DATA_DIR", os.path.dirname(os.path.abspath(__file__)))
+DATABASE_DIR = os.path.join(BASE_DATA_DIR, "database")
 DATABASE_PATH = os.path.join(DATABASE_DIR, "persons.db")
 
 logger = logging.getLogger(__name__)

@@ -320,21 +320,29 @@ docker run -v $(pwd)/dataset:/app/dataset \
 
 ## 🚀 Deployment
 
-### Vercel (Frontend Only)
+The project is designed to be decoupled: the React Dashboard on Vercel, and the ML Python Backend on Railway.
 
-The React dashboard can be deployed to Vercel:
+### 1. Frontend (Vercel)
 
-```bash
-vercel deploy dashboard/
-```
+Vercel will automatically detect the Vite application.
+1. Connect your GitHub repository to Vercel.
+2. In the Vercel project configuration, set the **Root Directory** to `dashboard`.
+3. Add the following Environment Variable in Vercel:
+   - `VITE_API_URL` = `https://<your-railway-backend-url>`
+4. Deploy!
 
-### Docker Platforms (Full Stack)
+### 2. Backend (Railway)
 
-Deploy the Docker image to:
-- **Render** - https://render.com
-- **Railway** - https://railway.app
-- **AWS ECS** - https://aws.amazon.com/ecs/
-- **DigitalOcean** - https://www.digitalocean.com/
+Railway will automatically build the Dockerfile and expose the API. However, Railway provides ephemeral storage by default. You **must** attach a volume to persist your databases and face embeddings.
+
+1. Connect your GitHub repository to Railway and deploy the root directory.
+2. Railway will automatically inject a `PORT` variable. The `Dockerfile` is already configured to listen to this port.
+3. **Configure Persistent Storage:**
+   - Go to your Railway service settings and create a new **Volume**.
+   - Set the Mount Path of the volume to: `/app/data`
+   - Under Environment Variables in Railway, add:
+     - `DATA_DIR` = `/app/data`
+4. Deploy! All your SQLite databases (`/app/data/database/persons.db`) and FAISS indices (`/app/data/embeddings/`) will now survive redeployments.
 
 ---
 

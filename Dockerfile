@@ -20,8 +20,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy the application code
 COPY . .
 
-# Expose FastAPI port
+# Expose a default port (Railway injects $PORT at runtime)
 EXPOSE 8000
 
-# Start server
-CMD ["uvicorn", "api:app", "--host", "0.0.0.0", "--port", "8000"]
+# Start server using shell form to allow environment variable interpolation
+CMD sh -c "uvicorn api.index:app --host 0.0.0.0 --port ${PORT:-8000}"

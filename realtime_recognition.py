@@ -12,6 +12,9 @@ import logging
 import argparse
 import numpy as np
 from pathlib import Path
+import sys
+
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), 'core')))
 
 from config import CAMERA_SOURCE, LOG_LEVEL, COLOUR_KNOWN, COLOUR_UNKNOWN, FONT
 from face_alignment import FaceAligner

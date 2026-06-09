@@ -14,6 +14,12 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 from PIL import Image, ImageTk
 import logging
+import os
+import sys
+
+# Ensure core modules are discoverable
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+sys.path.append(os.path.join(BASE_DIR, "core"))
 
 from config import CAMERA_SOURCE, LOG_LEVEL
 from face_alignment import FaceAligner

@@ -16,8 +16,10 @@ import sys
 
 # Ensure relative imports and model loading works
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if BASE_DIR not in sys.path:
-    sys.path.append(BASE_DIR)
+CORE_DIR = os.path.join(BASE_DIR, "core")
+for d in [BASE_DIR, CORE_DIR]:
+    if d not in sys.path:
+        sys.path.append(d)
 
 from detection import Detector
 from face_alignment import FaceAligner
@@ -104,10 +106,11 @@ def startup_event():
     import pickle
     
     base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    idx_path = os.path.join(base_dir, "embeddings", "faiss_index.index")
-    body_path = os.path.join(base_dir, "embeddings", "body_faiss.index")
-    attr_path = os.path.join(base_dir, "embeddings", "attr_faiss.index")
-    labels_path = os.path.join(base_dir, "embeddings", "multi_labels.pkl")
+    data_dir = os.getenv("DATA_DIR", base_dir)
+    idx_path = os.path.join(data_dir, "embeddings", "faiss_index.index")
+    body_path = os.path.join(data_dir, "embeddings", "body_faiss.index")
+    attr_path = os.path.join(data_dir, "embeddings", "attr_faiss.index")
+    labels_path = os.path.join(data_dir, "embeddings", "multi_labels.pkl")
     
     if os.path.exists(idx_path):
         face_faiss = faiss.read_index(idx_path)
@@ -121,7 +124,7 @@ def startup_event():
             multi_labels = pickle.load(f)
         logger.info("Multi-modal FAISS pipelines strictly cached in-memory.")
 
-    legacy_path = os.path.join(base_dir, "embeddings", "labels.pkl")
+    legacy_path = os.path.join(data_dir, "embeddings", "labels.pkl")
     if os.path.exists(legacy_path):
         with open(legacy_path, "rb") as f:
             label_map = pickle.load(f)
@@ -378,7 +381,7 @@ async def recognize_image(file: UploadFile = File(...), camera_id: str = "API"):
                     norm = np.linalg.norm(emb)
                     if norm > 0: emb = emb / norm
                     q_vec = np.array([emb], dtype=np.float32)
-                    distances, indices = faiss_idx.search(q_vec, 1)
+                    distances, indices = face_faiss.search(q_vec, 1)
                     
                     distance = distances[0][0]
                     idx = indices[0][0]

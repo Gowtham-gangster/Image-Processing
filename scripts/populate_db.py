@@ -2,6 +2,8 @@ import os
 import cv2
 import logging
 import numpy as np
+import sys
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'core')))
 from config import TRAIN_DIR
 from embedding_model import get_embedder
 from body_feature_extractor import BodyFeatureExtractor

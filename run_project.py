@@ -6,6 +6,10 @@ import subprocess
 import sys
 import os
 
+# Ensure core modules are discoverable
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+sys.path.append(os.path.join(BASE_DIR, "core"))
+
 def main():
     # Install requirements
     print("Installing dependencies...")

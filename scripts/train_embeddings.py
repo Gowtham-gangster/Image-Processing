@@ -4,6 +4,9 @@ import pickle
 import logging
 import numpy as np
 import cv2
+import sys
+
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'core')))
 
 from dataset_loader import DatasetLoader
 from face_alignment import FaceAligner
@@ -94,10 +97,13 @@ def run_training_pipeline() -> None:
         
         total_images_processed += 1
         
-    os.makedirs("embeddings", exist_ok=True)
+    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    data_dir = os.getenv("DATA_DIR", base_dir)
+    emb_dir = os.path.join(data_dir, "embeddings")
+    os.makedirs(emb_dir, exist_ok=True)
         
     logger.info("Storing labels into embeddings/")
-    with open("embeddings/labels.pkl", "wb") as f:
+    with open(os.path.join(emb_dir, "labels.pkl"), "wb") as f:
         pickle.dump(label_map, f)
         
     print(f"Number of persons: {len(person_to_int)}")
@@ -116,7 +122,7 @@ def run_training_pipeline() -> None:
         
         idx = faiss.IndexFlatL2(dim)
         idx.add(mat)
-        faiss.write_index(idx, f"embeddings/{name}.index")
+        faiss.write_index(idx, os.path.join(emb_dir, f"{name}.index"))
         print(f"[{name}] Index Dimensions: {dim} -> Size: {idx.ntotal}")
 
     logger.info("Building Face FAISS index...")
@@ -129,7 +135,7 @@ def run_training_pipeline() -> None:
     build_faiss(attr_embeddings, "attr_faiss")
     
     # Save the parallel label arrays
-    with open("embeddings/multi_labels.pkl", "wb") as f:
+    with open(os.path.join(emb_dir, "multi_labels.pkl"), "wb") as f:
         pickle.dump({
             "face_labels": face_labels_int,
             "body_labels": body_labels_int,

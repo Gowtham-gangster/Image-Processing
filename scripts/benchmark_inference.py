@@ -37,6 +37,10 @@ from typing import Callable, Optional
 
 import cv2
 import numpy as np
+import sys
+import os
+
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'core')))
 
 from config import (
     ONNX_EMBEDDER_PATH, ONNX_MASK_PATH, ONNX_DETECTOR_PATH,
