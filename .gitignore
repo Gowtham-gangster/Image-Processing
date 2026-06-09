@@ -17,6 +17,10 @@ models/
 embeddings/
 yolov8n.pt
 
+# Railway upload bundle (generate with scripts/package_railway_data.py)
+railway_data.zip
+_railway_data_staging/
+
 # Databases
 database/
 *.db

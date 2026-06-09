@@ -10,8 +10,9 @@ import sqlite3
 import logging
 import numpy as np
 
-# Allow overriding the base directory for persistent volume mounts (e.g., Railway)
-BASE_DATA_DIR = os.getenv("DATA_DIR", os.path.dirname(os.path.abspath(__file__)))
+# Project root by default; Railway volume mounts at DATA_DIR=/app/data
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+BASE_DATA_DIR = os.getenv("DATA_DIR", _PROJECT_ROOT)
 DATABASE_DIR = os.path.join(BASE_DATA_DIR, "database")
 DATABASE_PATH = os.path.join(DATABASE_DIR, "persons.db")
 

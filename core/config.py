@@ -20,8 +20,9 @@ CLOUD_LITE = (
     or (_CLOUD_LITE_ENV not in ("0", "false", "no") and os.environ.get("RAILWAY_ENVIRONMENT"))
 )
 
-# ── Dataset paths ───────────────────────────────────────────────────────────
-DATASET_DIR       = os.path.join(ROOT_DIR, "dataset")
+# ── Dataset paths (under DATA_DIR on Railway volume when set) ─────────────────
+_DATA_ROOT        = os.environ.get("DATA_DIR", ROOT_DIR)
+DATASET_DIR       = os.path.join(_DATA_ROOT, "dataset")
 TRAIN_DIR         = os.path.join(DATASET_DIR, "train")
 TEST_DIR          = os.path.join(DATASET_DIR, "test")
 IS_VERCEL         = os.environ.get("VERCEL") == "1"

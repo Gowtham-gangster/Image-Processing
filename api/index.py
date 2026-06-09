@@ -39,9 +39,10 @@ for d in [BASE_DIR, CORE_DIR]:
     if d not in sys.path:
         sys.path.append(d)
 
-from config import CLOUD_LITE
+from config import CLOUD_LITE, DATASET_DIR, ROOT_DIR
 from attributes_manager import AttributesManager
 from database import PersonDatabase
+from data_seed import seed_persons_from_csv
 from alert_manager import AlertManager, ALERT_UNKNOWN_PERSON, ALERT_UNMASKED, ALERT_MASKED, ALERT_SPOOF
 from surveillance_logger import SurveillanceLogger
 from camera_manager import CameraManager
@@ -52,6 +53,9 @@ logger = logging.getLogger(__name__)
 
 _pipeline_ready = False
 _pipeline_error: Optional[str] = None
+_training_running = False
+_training_error: Optional[str] = None
+_training_result: Optional[dict] = None
 
 # ── SSE event queue shared across connections ─────────────────────────────────
 _sse_queue: asyncio.Queue = asyncio.Queue(maxsize=200)
@@ -91,16 +95,62 @@ def get_body_extractor():
     return body_extractor
 
 
+def _data_dir() -> str:
+    return os.getenv("DATA_DIR", os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+
+def _reload_faiss_indexes() -> dict:
+    """Reload embedding indexes from disk (after training or volume upload)."""
+    global face_faiss, body_faiss, attr_faiss, multi_labels, label_map
+    import pickle
+
+    data_dir = _data_dir()
+    emb_dir = os.path.join(data_dir, "embeddings")
+    loaded = {"face": 0, "body": 0, "attr": 0}
+
+    idx_path = os.path.join(emb_dir, "faiss_index.index")
+    body_path = os.path.join(emb_dir, "body_faiss.index")
+    attr_path = os.path.join(emb_dir, "attr_faiss.index")
+    labels_path = os.path.join(emb_dir, "multi_labels.pkl")
+    legacy_path = os.path.join(emb_dir, "labels.pkl")
+
+    import faiss as _faiss
+
+    face_faiss = _faiss.read_index(idx_path) if os.path.exists(idx_path) else None
+    body_faiss = _faiss.read_index(body_path) if os.path.exists(body_path) else None
+    attr_faiss = _faiss.read_index(attr_path) if os.path.exists(attr_path) else None
+    if face_faiss:
+        loaded["face"] = face_faiss.ntotal
+    if body_faiss:
+        loaded["body"] = body_faiss.ntotal
+    if attr_faiss:
+        loaded["attr"] = attr_faiss.ntotal
+
+    if os.path.exists(labels_path):
+        with open(labels_path, "rb") as f:
+            multi_labels = pickle.load(f)
+    if os.path.exists(legacy_path):
+        with open(legacy_path, "rb") as f:
+            label_map = pickle.load(f)
+
+    logger.info("Reloaded FAISS indexes: %s", loaded)
+    return loaded
+
+
 def _init_core_services() -> None:
     """Lightweight services only — must finish before Railway health checks."""
     global person_db, attributes_mgr, alert_mgr, surv_logger, camera_mgr
     logger.info("Initializing core services (database, alerts, cameras)...")
+    logger.info("DATA_DIR=%s", _data_dir())
     person_db      = PersonDatabase()
+    seeded         = seed_persons_from_csv(person_db)
+    if seeded:
+        logger.info("Imported %d persons from persons.csv", seeded)
     attributes_mgr = AttributesManager(db=person_db)
     alert_mgr      = AlertManager()
     surv_logger    = SurveillanceLogger()
     camera_mgr     = CameraManager()
-    logger.info("Core services ready.")
+    logger.info("Core services ready (%d persons in DB).", len(person_db.all_persons()))
 
 
 def _init_ml_pipeline() -> None:
@@ -112,8 +162,6 @@ def _init_ml_pipeline() -> None:
 
     try:
         logger.info("Background: loading AI pipeline...")
-        import pickle
-        import faiss
         from face_alignment import create_aligner
         from feature_extractor import FeatureExtractor
         from unknown_detector import UnknownDetector
@@ -138,30 +186,7 @@ def _init_ml_pipeline() -> None:
             aligner       = create_aligner(min_confidence=0.40)
             yolo_detector = YoloPersonDetector(aligner=aligner)
 
-        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        data_dir = os.getenv("DATA_DIR", base_dir)
-        idx_path = os.path.join(data_dir, "embeddings", "faiss_index.index")
-        body_path = os.path.join(data_dir, "embeddings", "body_faiss.index")
-        attr_path = os.path.join(data_dir, "embeddings", "attr_faiss.index")
-        labels_path = os.path.join(data_dir, "embeddings", "multi_labels.pkl")
-
-        if os.path.exists(idx_path):
-            face_faiss = faiss.read_index(idx_path)
-        if os.path.exists(body_path):
-            body_faiss = faiss.read_index(body_path)
-        if os.path.exists(attr_path):
-            attr_faiss = faiss.read_index(attr_path)
-
-        if os.path.exists(labels_path):
-            with open(labels_path, "rb") as f:
-                multi_labels = pickle.load(f)
-            logger.info("Multi-modal FAISS pipelines cached in-memory.")
-
-        legacy_path = os.path.join(data_dir, "embeddings", "labels.pkl")
-        if os.path.exists(legacy_path):
-            with open(legacy_path, "rb") as f:
-                label_map = pickle.load(f)
-            logger.info("Legacy labels loaded.")
+        _reload_faiss_indexes()
 
         unknown_det = UnknownDetector(threshold=0.60)
         if not CLOUD_LITE:
@@ -270,17 +295,99 @@ def health_check():
 
 # ── Persons ───────────────────────────────────────────────────────────────────
 
+def _normalize_person_row(row: dict) -> dict:
+    """Map DB column 'id' to person_id for the React dashboard."""
+    out = dict(row)
+    if out.get("id") and not out.get("person_id"):
+        out["person_id"] = out["id"]
+    for k, v in out.items():
+        if v is None:
+            out[k] = "N/A"
+    return out
+
+
 @app.get("/persons", tags=["Persons"])
 def list_persons():
     """List all enrolled persons and their attributes."""
     if person_db is None:
         raise HTTPException(status_code=503, detail="Database not initialized yet.")
-    records = person_db.all_persons()
-    for r in records:
-        for k, v in r.items():
-            if v is None:
-                r[k] = "N/A"
+    records = [_normalize_person_row(r) for r in person_db.all_persons()]
     return {"persons": records, "total": len(records)}
+
+
+@app.get("/admin/data-status", tags=["Admin"])
+def data_status():
+    """Debug paths and counts for Railway volume / dataset setup."""
+    data_dir = _data_dir()
+    emb_dir = os.path.join(data_dir, "embeddings")
+    train_dir = os.path.join(data_dir, "dataset", "train")
+    train_persons = (
+        len([d for d in os.listdir(train_dir) if os.path.isdir(os.path.join(train_dir, d))])
+        if os.path.isdir(train_dir) else 0
+    )
+    return {
+        "data_dir": data_dir,
+        "database_path": person_db.db_path if person_db else None,
+        "persons_in_db": len(person_db.all_persons()) if person_db else 0,
+        "train_folders": train_persons,
+        "embeddings_dir": emb_dir,
+        "face_index": face_faiss.ntotal if face_faiss else 0,
+        "body_index": body_faiss.ntotal if body_faiss else 0,
+        "attr_index": attr_faiss.ntotal if attr_faiss else 0,
+        "pipeline_ready": _pipeline_ready,
+        "training_running": _training_running,
+        "training_error": _training_error,
+        "training_result": _training_result,
+        "cloud_lite": CLOUD_LITE,
+    }
+
+
+def _run_training_job() -> None:
+    global _training_running, _training_error, _training_result, _pipeline_ready
+    try:
+        from training_pipeline import run_training_pipeline
+        _training_result = run_training_pipeline()
+        _reload_faiss_indexes()
+        _pipeline_ready = True
+        _pipeline_error = None
+        logger.info("Training complete: %s", _training_result)
+    except Exception as exc:
+        _training_error = str(exc)
+        logger.exception("Training failed: %s", exc)
+    finally:
+        _training_running = False
+
+
+@app.post("/admin/train", tags=["Admin"])
+def start_training():
+    """
+    Train FAISS indexes from dataset/train on the Railway volume.
+    Runs in background; poll GET /admin/data-status for progress.
+    """
+    global _training_running, _training_error, _training_result
+    if _training_running:
+        return {"status": "running", "message": "Training already in progress."}
+    train_dir = os.path.join(_data_dir(), "dataset", "train")
+    if not os.path.isdir(train_dir):
+        raise HTTPException(
+            status_code=400,
+            detail=f"No dataset/train at {train_dir}. Upload training images to the Railway volume.",
+        )
+    _training_running = True
+    _training_error = None
+    _training_result = None
+    threading.Thread(target=_run_training_job, daemon=True, name="train-job").start()
+    return {
+        "status": "started",
+        "message": "Training started from dataset/train. Poll /admin/data-status until training_running is false.",
+    }
+
+
+@app.post("/admin/reload-embeddings", tags=["Admin"])
+def reload_embeddings():
+    """Reload FAISS indexes from disk without restarting the server."""
+    loaded = _reload_faiss_indexes()
+    return {"status": "ok", "loaded": loaded}
 
 @app.post("/persons", tags=["Persons"])
 def add_person(person: PersonCreate):
