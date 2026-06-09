@@ -1,3 +1,10 @@
+import os
+import sys
+
+# Prevent OpenMP segmentation faults when loading TensorFlow (MTCNN) and PyTorch (YOLO) together
+os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
+os.environ["OMP_NUM_THREADS"] = "1"
+
 import asyncio
 import json
 import logging
@@ -11,8 +18,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
-import os
-import sys
 
 # Ensure relative imports and model loading works
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
