@@ -16,9 +16,18 @@ export default function PersonsManager() {
     setLoading(true)
     try {
       const r = await fetch(`${API}/persons`)
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({}))
+        showToast(err.detail || `API error ${r.status} — check Railway backend`, 'error')
+        setPersons([])
+        return
+      }
       const d = await r.json()
       setPersons(d.persons || [])
-    } catch (_) {}
+    } catch (e) {
+      showToast(`Cannot reach API at ${API} — is Railway running?`, 'error')
+      setPersons([])
+    }
     setLoading(false)
   }
 

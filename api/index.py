@@ -21,8 +21,10 @@ import asyncio
 import json
 import logging
 import io
+import threading
 import cv2
 import numpy as np
+from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Optional
 from fastapi import FastAPI, UploadFile, File, HTTPException, Query
@@ -59,21 +61,8 @@ import faiss
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Initialize FastAPI app
-app = FastAPI(
-    title="Mask-Aware Hybrid Person Identification API",
-    description="Real-time surveillance system with face recognition, liveness detection, and alerting.",
-    version="3.0.0",
-)
-
-# Allow all origins for dashboard dev (restrict in production)
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+_pipeline_ready = False
+_pipeline_error: Optional[str] = None
 
 # ── SSE event queue shared across connections ─────────────────────────────────
 _sse_queue: asyncio.Queue = asyncio.Queue(maxsize=200)
@@ -112,73 +101,118 @@ def get_body_extractor() -> Optional[BodyFeatureExtractor]:
     return body_extractor
 
 
-@app.on_event("startup")
-def startup_event():
-    global aligner, embedder, db, attributes_mgr, unknown_det
-    global person_db, liveness_det, mask_det, alert_mgr, surv_logger
-    global yolo_detector, body_db, attr_extractor, camera_mgr
-
-    logger.info("Initializing AI pipeline components...")
-
-    global face_faiss, body_faiss, attr_faiss, multi_labels, label_map
-
+def _init_core_services() -> None:
+    """Lightweight services only — must finish before Railway health checks."""
+    global person_db, attributes_mgr, alert_mgr, surv_logger, camera_mgr
+    logger.info("Initializing core services (database, alerts, cameras)...")
     person_db      = PersonDatabase()
     attributes_mgr = AttributesManager(db=person_db)
-
-    preload_yolo_model()
-    attr_extractor = AttributeExtractor()
-    embedder       = FeatureExtractor()
-    camera_mgr     = CameraManager()
-
-    if CLOUD_LITE:
-        logger.info(
-            "Cloud lite mode enabled (~1 GB): YOLO + OpenCV only, no TensorFlow."
-        )
-        aligner       = create_aligner(min_confidence=0.40)
-        yolo_detector = YoloPersonDetector(aligner=aligner)
-        liveness_det  = LivenessDetector()
-        mask_det      = MaskDetector()
-    else:
-        logger.info("Pre-loading PyTorch/YOLO before TensorFlow to prevent OpenMP conflict...")
-        aligner       = create_aligner(min_confidence=0.40)
-        yolo_detector = YoloPersonDetector(aligner=aligner)
-
-    import pickle
-    
-    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    data_dir = os.getenv("DATA_DIR", base_dir)
-    idx_path = os.path.join(data_dir, "embeddings", "faiss_index.index")
-    body_path = os.path.join(data_dir, "embeddings", "body_faiss.index")
-    attr_path = os.path.join(data_dir, "embeddings", "attr_faiss.index")
-    labels_path = os.path.join(data_dir, "embeddings", "multi_labels.pkl")
-    
-    if os.path.exists(idx_path):
-        face_faiss = faiss.read_index(idx_path)
-    if os.path.exists(body_path):
-        body_faiss = faiss.read_index(body_path)
-    if os.path.exists(attr_path):
-        attr_faiss = faiss.read_index(attr_path)
-        
-    if os.path.exists(labels_path):
-        with open(labels_path, "rb") as f:
-            multi_labels = pickle.load(f)
-        logger.info("Multi-modal FAISS pipelines strictly cached in-memory.")
-
-    legacy_path = os.path.join(data_dir, "embeddings", "labels.pkl")
-    if os.path.exists(legacy_path):
-        with open(legacy_path, "rb") as f:
-            label_map = pickle.load(f)
-        logger.info("Legacy labels loaded.")
-        
-    unknown_det    = UnknownDetector(threshold=0.60)
-    if not CLOUD_LITE:
-        liveness_det = LivenessDetector()
-        mask_det     = MaskDetector()
     alert_mgr      = AlertManager()
     surv_logger    = SurveillanceLogger()
-    body_db        = BodyEmbeddingDatabase()
+    camera_mgr     = CameraManager()
+    logger.info("Core services ready.")
 
-    logger.info("AI pipeline successfully initialized.")
+
+def _init_ml_pipeline() -> None:
+    """Heavy ML models load in a background thread so the server binds PORT quickly."""
+    global aligner, embedder, db, unknown_det, liveness_det, mask_det
+    global yolo_detector, body_db, attr_extractor
+    global face_faiss, body_faiss, attr_faiss, multi_labels, label_map
+    global _pipeline_ready, _pipeline_error
+
+    try:
+        logger.info("Background: loading AI pipeline...")
+        import pickle
+
+        preload_yolo_model()
+        attr_extractor = AttributeExtractor()
+        embedder       = FeatureExtractor()
+
+        if CLOUD_LITE:
+            logger.info("Cloud lite mode (~1 GB): YOLO + OpenCV only, no TensorFlow.")
+            aligner       = create_aligner(min_confidence=0.40)
+            yolo_detector = YoloPersonDetector(aligner=aligner)
+            liveness_det  = LivenessDetector()
+            mask_det      = MaskDetector()
+        else:
+            logger.info("Background: loading PyTorch/YOLO before TensorFlow...")
+            aligner       = create_aligner(min_confidence=0.40)
+            yolo_detector = YoloPersonDetector(aligner=aligner)
+
+        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        data_dir = os.getenv("DATA_DIR", base_dir)
+        idx_path = os.path.join(data_dir, "embeddings", "faiss_index.index")
+        body_path = os.path.join(data_dir, "embeddings", "body_faiss.index")
+        attr_path = os.path.join(data_dir, "embeddings", "attr_faiss.index")
+        labels_path = os.path.join(data_dir, "embeddings", "multi_labels.pkl")
+
+        if os.path.exists(idx_path):
+            face_faiss = faiss.read_index(idx_path)
+        if os.path.exists(body_path):
+            body_faiss = faiss.read_index(body_path)
+        if os.path.exists(attr_path):
+            attr_faiss = faiss.read_index(attr_path)
+
+        if os.path.exists(labels_path):
+            with open(labels_path, "rb") as f:
+                multi_labels = pickle.load(f)
+            logger.info("Multi-modal FAISS pipelines cached in-memory.")
+
+        legacy_path = os.path.join(data_dir, "embeddings", "labels.pkl")
+        if os.path.exists(legacy_path):
+            with open(legacy_path, "rb") as f:
+                label_map = pickle.load(f)
+            logger.info("Legacy labels loaded.")
+
+        unknown_det = UnknownDetector(threshold=0.60)
+        if not CLOUD_LITE:
+            liveness_det = LivenessDetector()
+            mask_det     = MaskDetector()
+        body_db = BodyEmbeddingDatabase()
+
+        _pipeline_ready = True
+        logger.info("AI pipeline successfully initialized.")
+    except Exception as exc:
+        _pipeline_error = str(exc)
+        logger.exception("AI pipeline failed to initialize: %s", exc)
+
+
+def require_pipeline() -> None:
+    if _pipeline_error:
+        raise HTTPException(
+            status_code=503,
+            detail=f"ML pipeline failed to load: {_pipeline_error}",
+        )
+    if not _pipeline_ready:
+        raise HTTPException(
+            status_code=503,
+            detail="ML pipeline is still loading. Please retry in a few seconds.",
+        )
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    _init_core_services()
+    threading.Thread(target=_init_ml_pipeline, daemon=True, name="ml-pipeline-init").start()
+    yield
+
+
+# Initialize FastAPI app
+app = FastAPI(
+    title="Mask-Aware Hybrid Person Identification API",
+    description="Real-time surveillance system with face recognition, liveness detection, and alerting.",
+    version="3.0.0",
+    lifespan=lifespan,
+)
+
+# credentials=False is required when allow_origins=["*"] (browser CORS rule)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 
@@ -214,9 +248,16 @@ def root():
 @app.get("/health", tags=["System"])
 def health_check():
     """Verify that the API and AI modules are loaded and healthy."""
+    if _pipeline_error:
+        status = "error"
+    elif _pipeline_ready:
+        status = "healthy"
+    else:
+        status = "starting"
     return {
-        "status": "healthy",
-        "pipeline_active": yolo_detector is not None,
+        "status": status,
+        "pipeline_active": _pipeline_ready,
+        "pipeline_error": _pipeline_error,
         "mode": "cloud_lite" if CLOUD_LITE else "full",
         "version": "3.0.0",
     }
@@ -227,6 +268,8 @@ def health_check():
 @app.get("/persons", tags=["Persons"])
 def list_persons():
     """List all enrolled persons and their attributes."""
+    if person_db is None:
+        raise HTTPException(status_code=503, detail="Database not initialized yet.")
     records = person_db.all_persons()
     for r in records:
         for k, v in r.items():
@@ -375,6 +418,7 @@ async def recognize_image(file: UploadFile = File(...), camera_id: str = "API"):
     Upload an image file, detect all faces via MTCNN, then run:
     mask detection → liveness check → embedding + identification.
     """
+    require_pipeline()
     if file.content_type and not file.content_type.startswith("image/"):
         raise HTTPException(status_code=400, detail="File provided is not an image.")
 
@@ -742,6 +786,7 @@ async def predict_image(file: UploadFile = File(...)):
     Evaluate a single uploaded image and return a JSON response with
     identity, mask status, demographic metadata, and error streams.
     """
+    require_pipeline()
     if not file.filename.lower().endswith(('.jpg', '.jpeg', '.png')):
         raise HTTPException(status_code=400, detail="Only JPG and PNG files are allowed.")
     

@@ -48,6 +48,10 @@ export default function ImageTest() {
       const data = await response.json();
       setPrediction(data);
     } catch (err) {
+      if (err.message === 'Failed to fetch') {
+        setError(`Cannot reach API at ${API}. Check Railway is deployed and /health returns JSON.`);
+        return;
+      }
       setError(err.message);
     } finally {
       setIsLoading(false);
