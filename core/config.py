@@ -63,7 +63,11 @@ LOG_FILE          = os.path.join(LOGS_DIR, "surveillance.log")
 
 # ── Events / Alerts ──────────────────────────────────────────────────────────
 EVENTS_DB         = os.path.join(LOGS_DIR, "events.db")
-ALERT_CONFIG_PATH = os.path.join("/tmp", "alerts_config.json") if IS_VERCEL else os.path.join(ROOT_DIR, "alerts_config.json")
+ALERT_CONFIG_PATH = (
+    os.path.join("/tmp", "alerts_config.json")
+    if IS_VERCEL
+    else os.path.join(_DATA_ROOT, "alerts_config.json")
+)
 
 # ── Detection / recognition parameters ─────────────────────────────────────
 FACE_CONF_THRESHOLD   = 0.5    # DNN face detector confidence threshold

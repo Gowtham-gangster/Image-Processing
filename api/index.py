@@ -26,7 +26,7 @@ import numpy as np
 from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Optional
-from fastapi import FastAPI, UploadFile, File, HTTPException, Query
+from fastapi import FastAPI, UploadFile, File, HTTPException, Query, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -135,6 +135,26 @@ def _reload_faiss_indexes() -> dict:
 
     logger.info("Reloaded FAISS indexes: %s", loaded)
     return loaded
+
+
+def _reload_after_sync() -> dict:
+    """Reconnect DB + alerts + embeddings after /admin/sync upload."""
+    global person_db, attributes_mgr, alert_mgr, surv_logger, camera_mgr
+
+    person_db = PersonDatabase()
+    attributes_mgr = AttributesManager(db=person_db)
+    attributes_mgr.reload()
+    alert_mgr.reload_config()
+    surv_logger = SurveillanceLogger(db=person_db)
+    camera_mgr = CameraManager()
+    faiss_loaded = _reload_faiss_indexes()
+
+    return {
+        "persons_in_db": len(person_db.all_persons()),
+        "alerts_in_db": len(person_db.get_recent_alerts(limit=10000)),
+        "events_in_db": len(person_db.get_recent_logs(limit=10000)),
+        "faiss": faiss_loaded,
+    }
 
 
 def _init_core_services() -> None:
@@ -388,6 +408,31 @@ def reload_embeddings():
     """Reload FAISS indexes from disk without restarting the server."""
     loaded = _reload_faiss_indexes()
     return {"status": "ok", "loaded": loaded}
+
+
+@app.post("/admin/sync", tags=["Admin"])
+async def sync_from_local(
+    bundle: UploadFile = File(..., description="Zip from scripts/sync_to_railway.py"),
+    x_sync_secret: Optional[str] = Header(None),
+):
+    """
+    One-shot sync: persons DB, embeddings, alerts config, analytics logs.
+    Run locally:  python scripts/sync_to_railway.py https://YOUR-RAILWAY-URL
+    """
+    expected = os.environ.get("SYNC_SECRET")
+    if expected and x_sync_secret != expected:
+        raise HTTPException(status_code=403, detail="Invalid sync secret")
+
+    from sync_bundle import apply_sync_zip
+
+    raw = await bundle.read()
+    if not raw:
+        raise HTTPException(status_code=400, detail="Empty sync bundle")
+
+    result = apply_sync_zip(raw, _data_dir())
+    summary = _reload_after_sync()
+    return {"status": "synced", "extracted": result, "summary": summary}
+
 
 @app.post("/persons", tags=["Persons"])
 def add_person(person: PersonCreate):

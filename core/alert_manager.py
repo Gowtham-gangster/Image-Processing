@@ -112,6 +112,10 @@ class AlertManager:
     def get_config(self) -> dict:
         return dict(self._config)
 
+    def reload_config(self) -> None:
+        """Reload alert settings from disk (after cloud sync)."""
+        self._load_config()
+
     def _active_channels(self) -> list[str]:
         channels = []
         if self._config.get("slack_webhook_url"):
