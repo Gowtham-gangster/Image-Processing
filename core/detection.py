@@ -144,10 +144,11 @@ class Detector:
         # ── Load YOLO ─────────────────────────────────────────────────────────
         if backend in ("auto", "yolo"):
             try:
-                from yolo_person_detector import YoloPersonDetector
+                from yolo_person_detector import YoloPersonDetector, preload_yolo_model
                 from face_alignment import FaceAligner
+                preload_yolo_model()
                 self._yolo_detector = YoloPersonDetector(
-                    aligner=FaceAligner(), 
+                    aligner=FaceAligner(),
                     conf_threshold=self.conf_threshold
                 )
             except Exception as e:

@@ -13,6 +13,7 @@ os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"  # Suppress TF startup noise
 # If TF loads first, PyTorch's second OpenMP instance causes a segfault on Linux.
 try:
     import torch  # noqa: F401 - intentional pre-load
+    torch.set_num_threads(1)
 except ImportError:
     pass  # torch not installed, will fail later with a clearer error
 
@@ -37,7 +38,6 @@ for d in [BASE_DIR, CORE_DIR]:
     if d not in sys.path:
         sys.path.append(d)
 
-from detection import Detector
 from face_alignment import FaceAligner
 from feature_extractor import FeatureExtractor
 from unknown_detector import UnknownDetector
@@ -47,7 +47,7 @@ from liveness_detector import LivenessDetector
 from mask_detector import MaskDetector
 from alert_manager import AlertManager, ALERT_UNKNOWN_PERSON, ALERT_UNMASKED, ALERT_MASKED, ALERT_SPOOF
 from surveillance_logger import SurveillanceLogger
-from yolo_person_detector import YoloPersonDetector
+from yolo_person_detector import YoloPersonDetector, preload_yolo_model
 from body_feature_extractor import BodyFeatureExtractor
 from body_embedding_database import BodyEmbeddingDatabase
 from attribute_extractor import AttributeExtractor
@@ -78,7 +78,6 @@ app.add_middleware(
 _sse_queue: asyncio.Queue = asyncio.Queue(maxsize=200)
 
 # Global instances (loaded once on startup)
-detector       = None
 aligner        = None
 embedder       = None
 db             = None
@@ -102,34 +101,36 @@ multi_labels = {}
 label_map    = {}
 
 
+def get_body_extractor() -> BodyFeatureExtractor:
+    """Lazy-load ResNet50 after PyTorch/YOLO have initialized."""
+    global body_extractor
+    if body_extractor is None:
+        body_extractor = BodyFeatureExtractor()
+    return body_extractor
+
+
 @app.on_event("startup")
 def startup_event():
-    global detector, aligner, embedder, db, attributes_mgr, unknown_det
+    global aligner, embedder, db, attributes_mgr, unknown_det
     global person_db, liveness_det, mask_det, alert_mgr, surv_logger
-    global yolo_detector, body_extractor, body_db, attr_extractor, camera_mgr
+    global yolo_detector, body_db, attr_extractor, camera_mgr
 
     logger.info("Initializing AI pipeline components...")
 
     global face_faiss, body_faiss, attr_faiss, multi_labels, label_map
-    
+
     person_db      = PersonDatabase()
     attributes_mgr = AttributesManager(db=person_db)
-    
-    # ── Load PyTorch-based models FIRST (before TensorFlow) ───────────────────
-    # This ensures PyTorch's OpenMP is the primary instance on Linux,
-    # preventing the segfault when MTCNN (TF) loads afterwards.
+
+    # PyTorch/YOLO must fully initialize before any TensorFlow import (MTCNN, ResNet50).
     logger.info("Pre-loading PyTorch/YOLO before TensorFlow to prevent OpenMP conflict...")
-    body_extractor = BodyFeatureExtractor()
+    preload_yolo_model()
     attr_extractor = AttributeExtractor()
-    # YoloPersonDetector will be initialized after aligner is ready (needs it as arg)
-    # but we pre-warm torch here via body/attr extractors.
-    
-    # ── Now load TensorFlow-based models ─────────────────────────────────────
-    detector       = Detector(backend="auto")
     aligner        = FaceAligner(min_confidence=0.40)
+    yolo_detector  = YoloPersonDetector(aligner=aligner)
     embedder       = FeatureExtractor()
-    camera_mgr     = CameraManager()  # Initialize camera manager
-    
+    camera_mgr     = CameraManager()
+
     import pickle
     
     base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -162,9 +163,6 @@ def startup_event():
     mask_det       = MaskDetector()
     alert_mgr      = AlertManager()
     surv_logger    = SurveillanceLogger()
-    
-    # YoloPersonDetector initialized last since aligner is now available
-    yolo_detector  = YoloPersonDetector(aligner=aligner)
     body_db        = BodyEmbeddingDatabase()
 
     logger.info("AI pipeline successfully initialized.")
@@ -192,7 +190,7 @@ class AlertConfig(BaseModel):
 @app.get("/health", tags=["System"])
 def health_check():
     """Verify that the API and AI modules are loaded and healthy."""
-    return {"status": "healthy", "pipeline_active": detector is not None, "version": "3.0.0"}
+    return {"status": "healthy", "pipeline_active": yolo_detector is not None, "version": "3.0.0"}
 
 
 # ── Persons ───────────────────────────────────────────────────────────────────
@@ -588,7 +586,7 @@ def recognize_uploaded_image(image_path: str) -> dict:
             debug_info["final_result"] = "Known (Fast Path)"
         else:
             # Weak face match - run full multi-modal pipeline
-            b_dists, b_inds, _ = search_faiss(body_faiss, body_extractor, body_crop, "body_labels")
+            b_dists, b_inds, _ = search_faiss(body_faiss, get_body_extractor(), body_crop, "body_labels")
             a_dists, a_inds, _ = search_faiss(attr_faiss, attr_extractor, body_crop, "attr_labels")
             
             b_labels_map = multi_labels.get("body_labels", [])
@@ -629,7 +627,7 @@ def recognize_uploaded_image(image_path: str) -> dict:
             debug_info["final_result"] = "Known" if matched_id != "Unknown" and matched_id != "Unknown Person" else "Unknown"
     else:
         # No face detected - run body/attr only
-        b_dists, b_inds, _ = search_faiss(body_faiss, body_extractor, body_crop, "body_labels")
+        b_dists, b_inds, _ = search_faiss(body_faiss, get_body_extractor(), body_crop, "body_labels")
         a_dists, a_inds, _ = search_faiss(attr_faiss, attr_extractor, body_crop, "attr_labels")
         
         b_labels_map = multi_labels.get("body_labels", [])
@@ -911,7 +909,7 @@ async def video_feed(camera_id: str = Query("CAM001", description="Camera ID fro
                                     # Body embedding
                                     if body_faiss is not None and body_crop is not None:
                                         try:
-                                            b_emb = body_extractor.extract(body_crop)
+                                            b_emb = get_body_extractor().extract(body_crop)
                                             norm = np.linalg.norm(b_emb)
                                             if norm > 0: b_emb = b_emb / norm
                                             b_vec = np.array([b_emb], dtype=np.float32)
@@ -1152,7 +1150,7 @@ async def capture_snapshot(camera_id: str = Query("CAM001", description="Camera 
                             # Body embedding
                             if body_faiss is not None and body_crop is not None:
                                 try:
-                                    b_emb = body_extractor.extract(body_crop)
+                                    b_emb = get_body_extractor().extract(body_crop)
                                     norm = np.linalg.norm(b_emb)
                                     if norm > 0: b_emb = b_emb / norm
                                     b_vec = np.array([b_emb], dtype=np.float32)

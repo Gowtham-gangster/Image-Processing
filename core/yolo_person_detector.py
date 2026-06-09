@@ -27,14 +27,50 @@ Usage
         # res["body_crop"] and res["face_crop"] are the respective numpy arrays
 """
 
+import os
 import cv2
 import logging
 import numpy as np
 from typing import List, Dict, Any, Optional
-from config import LOG_LEVEL
+from config import LOG_LEVEL, ROOT_DIR
 
 logging.basicConfig(level=getattr(logging, LOG_LEVEL, logging.INFO))
 logger = logging.getLogger(__name__)
+
+_yolo_model_cache: dict[str, object] = {}
+
+
+def _resolve_yolo_weights(model_name: str) -> str:
+    """Prefer bundled weights at project root over auto-download."""
+    if os.path.isabs(model_name) or os.path.exists(model_name):
+        return model_name
+    bundled = os.path.join(ROOT_DIR, model_name)
+    return bundled if os.path.exists(bundled) else model_name
+
+
+def preload_yolo_model(model_name: str = "yolov8n.pt") -> None:
+    """
+    Load YOLOv8 before TensorFlow/MTCNN initialize.
+
+    On Linux, PyTorch must claim the OpenMP runtime before TensorFlow loads;
+    loading YOLO here prevents the TF+PyTorch segmentation fault at startup.
+    """
+    weights = _resolve_yolo_weights(model_name)
+    if weights in _yolo_model_cache:
+        return
+    try:
+        import torch  # noqa: F401 - ensure PyTorch runtime is active
+        torch.set_num_threads(1)
+        from ultralytics import YOLO
+        logger.info("Pre-loading YOLOv8 '%s' before TensorFlow...", weights)
+        _yolo_model_cache[weights] = YOLO(weights)
+        import logging as ul_logging
+        ul_logging.getLogger("ultralytics").setLevel(ul_logging.WARNING)
+        logger.info("YOLOv8 pre-load complete.")
+    except ImportError:
+        logger.error("The 'ultralytics' package is required. Run: pip install ultralytics")
+        raise
+
 
 class YoloPersonDetector:
     """
@@ -56,15 +92,13 @@ class YoloPersonDetector:
         """
         self.aligner = aligner
         self.conf_threshold = conf_threshold
-        
+        weights = _resolve_yolo_weights(model_name)
+
         try:
-            from ultralytics import YOLO
-            logger.info("Loading YOLOv8 model '%s' ...", model_name)
-            self.model = YOLO(model_name)
-            # Suppress verbose UL logging on every frame
-            import logging as ul_logging
-            ul_logging.getLogger("ultralytics").setLevel(ul_logging.WARNING)
-            logger.info("YOLOv8 successfully loaded.")
+            if weights not in _yolo_model_cache:
+                preload_yolo_model(weights)
+            self.model = _yolo_model_cache[weights]
+            logger.info("YOLOv8 ready (weights=%s).", weights)
         except ImportError:
             logger.error("The 'ultralytics' package is required. Run: pip install ultralytics")
             raise

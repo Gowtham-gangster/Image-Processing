@@ -19,6 +19,7 @@ RUN apt-get update && apt-get install -y \
 # Environment variables to prevent OpenMP segfaults (TF + PyTorch conflict)
 ENV KMP_DUPLICATE_LIB_OK=TRUE
 ENV OMP_NUM_THREADS=1
+ENV TF_ENABLE_ONEDNN_OPTS=0
 # Ensure Python output is flushed immediately to Railway logs
 ENV PYTHONUNBUFFERED=1
 
@@ -28,6 +29,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy the application code
 COPY . .
+
+# Pre-download YOLO weights during build (PyTorch before TensorFlow at runtime)
+RUN python -c "from ultralytics import YOLO; YOLO('yolov8n.pt')"
 
 # Expose a default port (Railway injects $PORT at runtime)
 EXPOSE 8000

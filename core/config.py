@@ -8,7 +8,8 @@ All paths, thresholds, and model parameters are defined here.
 import os
 
 # ── Project root ────────────────────────────────────────────────────────────
-ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
+_CORE_DIR = os.path.dirname(os.path.abspath(__file__))
+ROOT_DIR = os.path.dirname(_CORE_DIR)
 
 # ── Dataset paths ───────────────────────────────────────────────────────────
 DATASET_DIR       = os.path.join(ROOT_DIR, "dataset")

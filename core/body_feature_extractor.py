@@ -35,22 +35,28 @@ logger = logging.getLogger(__name__)
 class BodyFeatureExtractor:
     """
     Extracts 2048-Dimensional embeddings from body images using ResNet50.
+
+    ResNet50 is lazy-loaded on first use so PyTorch/YOLO can initialize first
+    (avoids TensorFlow+PyTorch OpenMP segfault on Linux).
     """
 
     def __init__(self) -> None:
+        self.model = None
+        self.preprocess_input = None
+        self.target_size = (224, 224)
+
+    def _ensure_loaded(self) -> None:
+        if self.model is not None:
+            return
         logger.info("Initializing BodyFeatureExtractor (ResNet50)...")
         try:
             from tensorflow.keras.applications import ResNet50
             from tensorflow.keras.applications.resnet50 import preprocess_input
-            
-            # Load ResNet50 without the classification head, using average pooling
-            # This yields a 2048-D vector per image.
+
             os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
             self.model = ResNet50(weights='imagenet', include_top=False, pooling='avg')
             self.preprocess_input = preprocess_input
-            self.target_size = (224, 224)
             logger.info("ResNet50 model loaded successfully.")
-            
         except ImportError:
             logger.error(
                 "TensorFlow/Keras is required for BodyFeatureExtractor.\n"
@@ -74,6 +80,8 @@ class BodyFeatureExtractor:
         """
         if body_bgr is None or body_bgr.size == 0:
             raise ValueError("Empty image provided to body feature extractor.")
+
+        self._ensure_loaded()
 
         # Resize to ResNet50 expected input size
         body_resized = cv2.resize(body_bgr, self.target_size)
