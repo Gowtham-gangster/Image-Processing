@@ -8,14 +8,13 @@ os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 os.environ["OMP_NUM_THREADS"] = "1"
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"  # Suppress TF startup noise
 
-# ── Force PyTorch to load FIRST before TensorFlow ─────────────────────────────
-# PyTorch (used by YOLO) must initialize its OpenMP instance before TF loads.
-# If TF loads first, PyTorch's second OpenMP instance causes a segfault on Linux.
-try:
-    import torch  # noqa: F401 - intentional pre-load
-    torch.set_num_threads(1)
-except ImportError:
-    pass  # torch not installed, will fail later with a clearer error
+# Pre-load PyTorch only on local full mode; on Railway it loads in the ML thread.
+if not os.environ.get("RAILWAY_ENVIRONMENT"):
+    try:
+        import torch  # noqa: F401
+        torch.set_num_threads(1)
+    except ImportError:
+        pass
 
 import asyncio
 import json
@@ -40,22 +39,12 @@ for d in [BASE_DIR, CORE_DIR]:
     if d not in sys.path:
         sys.path.append(d)
 
-from face_alignment import create_aligner
 from config import CLOUD_LITE
-from feature_extractor import FeatureExtractor
-from unknown_detector import UnknownDetector
 from attributes_manager import AttributesManager
 from database import PersonDatabase
-from liveness_detector import LivenessDetector
-from mask_detector import MaskDetector
 from alert_manager import AlertManager, ALERT_UNKNOWN_PERSON, ALERT_UNMASKED, ALERT_MASKED, ALERT_SPOOF
 from surveillance_logger import SurveillanceLogger
-from yolo_person_detector import YoloPersonDetector, preload_yolo_model
-from body_feature_extractor import BodyFeatureExtractor
-from body_embedding_database import BodyEmbeddingDatabase
-from attribute_extractor import AttributeExtractor
 from camera_manager import CameraManager
-import faiss
 
 # Setup Logging
 logging.basicConfig(level=logging.INFO)
@@ -91,12 +80,13 @@ multi_labels = {}
 label_map    = {}
 
 
-def get_body_extractor() -> Optional[BodyFeatureExtractor]:
+def get_body_extractor():
     """Lazy-load ResNet50 after PyTorch/YOLO have initialized (skipped in cloud lite)."""
     global body_extractor
     if CLOUD_LITE:
         return None
     if body_extractor is None:
+        from body_feature_extractor import BodyFeatureExtractor
         body_extractor = BodyFeatureExtractor()
     return body_extractor
 
@@ -123,6 +113,15 @@ def _init_ml_pipeline() -> None:
     try:
         logger.info("Background: loading AI pipeline...")
         import pickle
+        import faiss
+        from face_alignment import create_aligner
+        from feature_extractor import FeatureExtractor
+        from unknown_detector import UnknownDetector
+        from liveness_detector import LivenessDetector
+        from mask_detector import MaskDetector
+        from yolo_person_detector import YoloPersonDetector, preload_yolo_model
+        from body_embedding_database import BodyEmbeddingDatabase
+        from attribute_extractor import AttributeExtractor
 
         preload_yolo_model()
         attr_extractor = AttributeExtractor()
@@ -233,6 +232,12 @@ class AlertConfig(BaseModel):
 
 
 # ── Health ────────────────────────────────────────────────────────────────────
+
+@app.get("/ping", tags=["System"])
+def ping():
+    """Minimal liveness probe — no DB or ML required."""
+    return {"ok": True, "port": os.environ.get("PORT", "8000")}
+
 
 @app.get("/", tags=["System"])
 def root():
