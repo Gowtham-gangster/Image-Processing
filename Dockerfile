@@ -14,6 +14,7 @@ RUN apt-get update && apt-get install -y \
     gcc \
     python3-dev \
     libgomp1 \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
 # Environment variables to prevent OpenMP segfaults (TF + PyTorch conflict)
@@ -30,8 +31,13 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy the application code
 COPY . .
 
-# Pre-download YOLO weights during build (PyTorch before TensorFlow at runtime)
-RUN python -c "from ultralytics import YOLO; YOLO('yolov8n.pt')"
+# Pre-download models during build (keeps Railway 1 GB startup fast & offline-safe)
+RUN mkdir -p models && \
+    curl -fsSL -o models/deploy.prototxt \
+      https://raw.githubusercontent.com/opencv/opencv/master/samples/dnn/face_detector/deploy.prototxt && \
+    curl -fsSL -o models/res10_300x300_ssd_iter_140000.caffemodel \
+      https://github.com/opencv/opencv_3rdparty/raw/dnn_samples_face_detector_20180205_fp16/res10_300x300_ssd_iter_140000_fp16.caffemodel && \
+    python -c "from ultralytics import YOLO; YOLO('yolov8n.pt')"
 
 # Expose a default port (Railway injects $PORT at runtime)
 EXPOSE 8000

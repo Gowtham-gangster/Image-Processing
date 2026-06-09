@@ -38,7 +38,8 @@ for d in [BASE_DIR, CORE_DIR]:
     if d not in sys.path:
         sys.path.append(d)
 
-from face_alignment import FaceAligner
+from face_alignment import create_aligner
+from config import CLOUD_LITE
 from feature_extractor import FeatureExtractor
 from unknown_detector import UnknownDetector
 from attributes_manager import AttributesManager
@@ -101,9 +102,11 @@ multi_labels = {}
 label_map    = {}
 
 
-def get_body_extractor() -> BodyFeatureExtractor:
-    """Lazy-load ResNet50 after PyTorch/YOLO have initialized."""
+def get_body_extractor() -> Optional[BodyFeatureExtractor]:
+    """Lazy-load ResNet50 after PyTorch/YOLO have initialized (skipped in cloud lite)."""
     global body_extractor
+    if CLOUD_LITE:
+        return None
     if body_extractor is None:
         body_extractor = BodyFeatureExtractor()
     return body_extractor
@@ -122,14 +125,23 @@ def startup_event():
     person_db      = PersonDatabase()
     attributes_mgr = AttributesManager(db=person_db)
 
-    # PyTorch/YOLO must fully initialize before any TensorFlow import (MTCNN, ResNet50).
-    logger.info("Pre-loading PyTorch/YOLO before TensorFlow to prevent OpenMP conflict...")
     preload_yolo_model()
     attr_extractor = AttributeExtractor()
-    aligner        = FaceAligner(min_confidence=0.40)
-    yolo_detector  = YoloPersonDetector(aligner=aligner)
     embedder       = FeatureExtractor()
     camera_mgr     = CameraManager()
+
+    if CLOUD_LITE:
+        logger.info(
+            "Cloud lite mode enabled (~1 GB): YOLO + OpenCV only, no TensorFlow."
+        )
+        aligner       = create_aligner(min_confidence=0.40)
+        yolo_detector = YoloPersonDetector(aligner=aligner)
+        liveness_det  = LivenessDetector()
+        mask_det      = MaskDetector()
+    else:
+        logger.info("Pre-loading PyTorch/YOLO before TensorFlow to prevent OpenMP conflict...")
+        aligner       = create_aligner(min_confidence=0.40)
+        yolo_detector = YoloPersonDetector(aligner=aligner)
 
     import pickle
     
@@ -159,8 +171,9 @@ def startup_event():
         logger.info("Legacy labels loaded.")
         
     unknown_det    = UnknownDetector(threshold=0.60)
-    liveness_det   = LivenessDetector()
-    mask_det       = MaskDetector()
+    if not CLOUD_LITE:
+        liveness_det = LivenessDetector()
+        mask_det     = MaskDetector()
     alert_mgr      = AlertManager()
     surv_logger    = SurveillanceLogger()
     body_db        = BodyEmbeddingDatabase()
@@ -190,7 +203,12 @@ class AlertConfig(BaseModel):
 @app.get("/health", tags=["System"])
 def health_check():
     """Verify that the API and AI modules are loaded and healthy."""
-    return {"status": "healthy", "pipeline_active": yolo_detector is not None, "version": "3.0.0"}
+    return {
+        "status": "healthy",
+        "pipeline_active": yolo_detector is not None,
+        "mode": "cloud_lite" if CLOUD_LITE else "full",
+        "version": "3.0.0",
+    }
 
 
 # ── Persons ───────────────────────────────────────────────────────────────────
@@ -545,7 +563,9 @@ def recognize_uploaded_image(image_path: str) -> dict:
         if body_crop is None or body_crop.size == 0:
             body_crop = frame
         
-    if face_faiss is None or body_faiss is None or attr_faiss is None:
+    if face_faiss is None:
+        return fail("Face embedding index missing.")
+    if not CLOUD_LITE and body_faiss is None and attr_faiss is None:
         return fail("Models missing.")
         
     # Initialize Score Tensors
@@ -585,35 +605,38 @@ def recognize_uploaded_image(image_path: str) -> dict:
             matched_id = best_id
             debug_info["final_result"] = "Known (Fast Path)"
         else:
-            # Weak face match - run full multi-modal pipeline
-            b_dists, b_inds, _ = search_faiss(body_faiss, get_body_extractor(), body_crop, "body_labels")
-            a_dists, a_inds, _ = search_faiss(attr_faiss, attr_extractor, body_crop, "attr_labels")
-            
-            b_labels_map = multi_labels.get("body_labels", [])
-            a_labels_map = multi_labels.get("attr_labels", [])
-            
-            for d, i in zip(b_dists, b_inds):
-                if i != -1 and i < len(b_labels_map):
-                    pid_int = b_labels_map[i]
-                    pid = label_map.get(pid_int, str(pid_int))
-                    scr = max(0.0, 1.0 - (d / 2.0))
-                    if pid not in scores: scores[pid] = {"F": 0, "B": 0, "A": 0}
-                    scores[pid]["B"] = max(scores[pid]["B"], scr)
-                    
-            for d, i in zip(a_dists, a_inds):
-                if i != -1 and i < len(a_labels_map):
-                    pid_int = a_labels_map[i]
-                    pid = label_map.get(pid_int, str(pid_int))
-                    scr = max(0.0, 1.0 - (d / 2.0))
-                    if pid not in scores: scores[pid] = {"F": 0, "B": 0, "A": 0}
-                    scores[pid]["A"] = max(scores[pid]["A"], scr)
-            
-            # Late fusion
+            # Weak face match - supplement with body/attr when available
+            if not CLOUD_LITE and body_faiss is not None:
+                body_ext = get_body_extractor()
+                if body_ext is not None:
+                    b_dists, b_inds, _ = search_faiss(body_faiss, body_ext, body_crop, "body_labels")
+                    b_labels_map = multi_labels.get("body_labels", [])
+                    for d, i in zip(b_dists, b_inds):
+                        if i != -1 and i < len(b_labels_map):
+                            pid_int = b_labels_map[i]
+                            pid = label_map.get(pid_int, str(pid_int))
+                            scr = max(0.0, 1.0 - (d / 2.0))
+                            if pid not in scores: scores[pid] = {"F": 0, "B": 0, "A": 0}
+                            scores[pid]["B"] = max(scores[pid]["B"], scr)
+
+            if attr_faiss is not None:
+                a_dists, a_inds, _ = search_faiss(attr_faiss, attr_extractor, body_crop, "attr_labels")
+                a_labels_map = multi_labels.get("attr_labels", [])
+                for d, i in zip(a_dists, a_inds):
+                    if i != -1 and i < len(a_labels_map):
+                        pid_int = a_labels_map[i]
+                        pid = label_map.get(pid_int, str(pid_int))
+                        scr = max(0.0, 1.0 - (d / 2.0))
+                        if pid not in scores: scores[pid] = {"F": 0, "B": 0, "A": 0}
+                        scores[pid]["A"] = max(scores[pid]["A"], scr)
+
             best_id = "Unknown Person"
             best_score = 0.0
-            
             for pid, s in scores.items():
-                fused = (s["F"] * 0.5) + (s["B"] * 0.3) + (s["A"] * 0.2)
+                if CLOUD_LITE:
+                    fused = (s["F"] * 0.7) + (s["A"] * 0.3)
+                else:
+                    fused = (s["F"] * 0.5) + (s["B"] * 0.3) + (s["A"] * 0.2)
                 if fused > best_score:
                     best_score = fused
                     best_id = pid
@@ -626,28 +649,30 @@ def recognize_uploaded_image(image_path: str) -> dict:
             
             debug_info["final_result"] = "Known" if matched_id != "Unknown" and matched_id != "Unknown Person" else "Unknown"
     else:
-        # No face detected - run body/attr only
-        b_dists, b_inds, _ = search_faiss(body_faiss, get_body_extractor(), body_crop, "body_labels")
-        a_dists, a_inds, _ = search_faiss(attr_faiss, attr_extractor, body_crop, "attr_labels")
-        
-        b_labels_map = multi_labels.get("body_labels", [])
-        a_labels_map = multi_labels.get("attr_labels", [])
-        
-        for d, i in zip(b_dists, b_inds):
-            if i != -1 and i < len(b_labels_map):
-                pid_int = b_labels_map[i]
-                pid = label_map.get(pid_int, str(pid_int))
-                scr = max(0.0, 1.0 - (d / 2.0))
-                if pid not in scores: scores[pid] = {"F": 0, "B": 0, "A": 0}
-                scores[pid]["B"] = max(scores[pid]["B"], scr)
-                
-        for d, i in zip(a_dists, a_inds):
-            if i != -1 and i < len(a_labels_map):
-                pid_int = a_labels_map[i]
-                pid = label_map.get(pid_int, str(pid_int))
-                scr = max(0.0, 1.0 - (d / 2.0))
-                if pid not in scores: scores[pid] = {"F": 0, "B": 0, "A": 0}
-                scores[pid]["A"] = max(scores[pid]["A"], scr)
+        # No face detected - run body/attr only when indexes exist
+        if not CLOUD_LITE and body_faiss is not None:
+            body_ext = get_body_extractor()
+            if body_ext is not None:
+                b_dists, b_inds, _ = search_faiss(body_faiss, body_ext, body_crop, "body_labels")
+                b_labels_map = multi_labels.get("body_labels", [])
+                for d, i in zip(b_dists, b_inds):
+                    if i != -1 and i < len(b_labels_map):
+                        pid_int = b_labels_map[i]
+                        pid = label_map.get(pid_int, str(pid_int))
+                        scr = max(0.0, 1.0 - (d / 2.0))
+                        if pid not in scores: scores[pid] = {"F": 0, "B": 0, "A": 0}
+                        scores[pid]["B"] = max(scores[pid]["B"], scr)
+
+        if attr_faiss is not None:
+            a_dists, a_inds, _ = search_faiss(attr_faiss, attr_extractor, body_crop, "attr_labels")
+            a_labels_map = multi_labels.get("attr_labels", [])
+            for d, i in zip(a_dists, a_inds):
+                if i != -1 and i < len(a_labels_map):
+                    pid_int = a_labels_map[i]
+                    pid = label_map.get(pid_int, str(pid_int))
+                    scr = max(0.0, 1.0 - (d / 2.0))
+                    if pid not in scores: scores[pid] = {"F": 0, "B": 0, "A": 0}
+                    scores[pid]["A"] = max(scores[pid]["A"], scr)
         
         # Late fusion without face
         best_id = "Unknown Person"
@@ -907,9 +932,12 @@ async def video_feed(camera_id: str = Query("CAM001", description="Camera ID fro
                                             logger.debug(f"Face embedding failed: {e}")
                                     
                                     # Body embedding
-                                    if body_faiss is not None and body_crop is not None:
+                                    if not CLOUD_LITE and body_faiss is not None and body_crop is not None:
                                         try:
-                                            b_emb = get_body_extractor().extract(body_crop)
+                                            body_ext = get_body_extractor()
+                                            if body_ext is None:
+                                                raise RuntimeError("body extractor unavailable")
+                                            b_emb = body_ext.extract(body_crop)
                                             norm = np.linalg.norm(b_emb)
                                             if norm > 0: b_emb = b_emb / norm
                                             b_vec = np.array([b_emb], dtype=np.float32)
@@ -1148,9 +1176,12 @@ async def capture_snapshot(camera_id: str = Query("CAM001", description="Camera 
                                     logger.debug(f"Face embedding failed: {e}")
                             
                             # Body embedding
-                            if body_faiss is not None and body_crop is not None:
+                            if not CLOUD_LITE and body_faiss is not None and body_crop is not None:
                                 try:
-                                    b_emb = get_body_extractor().extract(body_crop)
+                                    body_ext = get_body_extractor()
+                                    if body_ext is None:
+                                        raise RuntimeError("body extractor unavailable")
+                                    b_emb = body_ext.extract(body_crop)
                                     norm = np.linalg.norm(b_emb)
                                     if norm > 0: b_emb = b_emb / norm
                                     b_vec = np.array([b_emb], dtype=np.float32)

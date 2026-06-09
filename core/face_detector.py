@@ -20,6 +20,7 @@ import numpy as np
 from config import (
     FACE_PROTO, FACE_MODEL,
     FACE_CONF_THRESHOLD, DNN_INPUT_SIZE,
+    CLOUD_LITE,
 )
 
 logger = logging.getLogger(__name__)
@@ -51,15 +52,23 @@ class FaceDetector:
             except Exception as exc:
                 logger.warning("DNN load failed (%s). Falling back to Haar.", exc)
 
-        # ── Fallback: MTCNN ───────────────────────────────────────────────────
+        # ── Fallback: Haar (cloud lite) or MTCNN (full local pipeline) ────────
         if self._mode == "none":
-            try:
-                from mtcnn import MTCNN
-                self._mtcnn = MTCNN()
-                self._mode = "mtcnn"
-                logger.info("FaceDetector: using MTCNN fallback.")
-            except ImportError:
-                raise RuntimeError("Could not load MTCNN. Run pip install mtcnn.")
+            if CLOUD_LITE:
+                cascade_path = cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
+                self._haar = cv2.CascadeClassifier(cascade_path)
+                if self._haar.empty():
+                    raise RuntimeError("Failed to load Haar cascade for cloud lite mode.")
+                self._mode = "haar"
+                logger.info("FaceDetector: using Haar Cascade (cloud lite).")
+            else:
+                try:
+                    from mtcnn import MTCNN
+                    self._mtcnn = MTCNN()
+                    self._mode = "mtcnn"
+                    logger.info("FaceDetector: using MTCNN fallback.")
+                except ImportError:
+                    raise RuntimeError("Could not load MTCNN. Run pip install mtcnn.")
 
     # ── Detection ─────────────────────────────────────────────────────────────
 
@@ -78,7 +87,16 @@ class FaceDetector:
         """
         if self._mode == "dnn":
             return self._detect_dnn(frame)
+        if self._mode == "haar":
+            return self._detect_haar(frame)
         return self._detect_mtcnn(frame)
+
+    def _detect_haar(self, frame: np.ndarray) -> list[tuple[int, int, int, int]]:
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        faces = self._haar.detectMultiScale(
+            gray, scaleFactor=1.1, minNeighbors=5, minSize=(30, 30)
+        )
+        return [(int(x), int(y), int(w), int(h)) for x, y, w, h in faces]
 
     def _detect_dnn(self, frame: np.ndarray) -> list[tuple[int, int, int, int]]:
         h, w = frame.shape[:2]

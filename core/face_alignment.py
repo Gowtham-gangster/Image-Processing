@@ -204,6 +204,58 @@ class FaceAligner:
         return aligned_results
 
 
+class LiteFaceAligner:
+    """
+    OpenCV-only face cropper for low-memory cloud deploys (no TensorFlow/MTCNN).
+
+    Returns the same dict shape as :class:`FaceAligner` for pipeline compatibility.
+    """
+
+    def __init__(
+        self,
+        output_size: tuple[int, int] = (224, 224),
+        min_confidence: float = 0.40,
+    ) -> None:
+        from face_detector import FaceDetector
+
+        self.output_size = output_size
+        self.min_confidence = min_confidence
+        self._detector = FaceDetector(conf_threshold=min_confidence)
+        logger.info("LiteFaceAligner ready (backend=%s).", self._detector.mode)
+
+    def align(self, image_bgr: np.ndarray) -> List[Dict[str, Any]]:
+        if image_bgr is None or image_bgr.size == 0:
+            return []
+
+        h, w = image_bgr.shape[:2]
+        aligned_results: List[Dict[str, Any]] = []
+        for box in self._detector.detect_faces(image_bgr):
+            x, y, bw, bh = box
+            x2 = min(w, x + bw)
+            y2 = min(h, y + bh)
+            x, y = max(0, x), max(0, y)
+            crop = image_bgr[y:y2, x:x2]
+            if crop.size == 0:
+                continue
+            aligned_crop = cv2.resize(crop, self.output_size)
+            aligned_results.append({
+                "box": (x, y, x2 - x, y2 - y),
+                "confidence": 1.0,
+                "keypoints": {},
+                "aligned_crop": aligned_crop,
+            })
+        return aligned_results
+
+
+def create_aligner(min_confidence: float = 0.40) -> FaceAligner | LiteFaceAligner:
+    """Pick MTCNN (local) or OpenCV-only aligner (Railway / 1 GB cloud)."""
+    from config import CLOUD_LITE
+
+    if CLOUD_LITE:
+        return LiteFaceAligner(min_confidence=min_confidence)
+    return FaceAligner(min_confidence=min_confidence)
+
+
 # ── CLI for testing ───────────────────────────────────────────────────────────
 
 def _parse_args() -> argparse.Namespace:

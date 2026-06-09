@@ -11,6 +11,15 @@ import os
 _CORE_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT_DIR = os.path.dirname(_CORE_DIR)
 
+# ── Cloud / Railway low-memory mode (~1 GB RAM) ─────────────────────────────
+# Skips TensorFlow (MTCNN, ResNet50); uses YOLO + OpenCV DNN/Haar only.
+# Auto-enabled on Railway; set CLOUD_LITE=0 to force the full local pipeline.
+_CLOUD_LITE_ENV = os.environ.get("CLOUD_LITE", "").lower()
+CLOUD_LITE = (
+    _CLOUD_LITE_ENV in ("1", "true", "yes")
+    or (_CLOUD_LITE_ENV not in ("0", "false", "no") and os.environ.get("RAILWAY_ENVIRONMENT"))
+)
+
 # ── Dataset paths ───────────────────────────────────────────────────────────
 DATASET_DIR       = os.path.join(ROOT_DIR, "dataset")
 TRAIN_DIR         = os.path.join(DATASET_DIR, "train")
