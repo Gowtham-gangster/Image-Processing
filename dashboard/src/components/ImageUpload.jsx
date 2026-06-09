@@ -59,7 +59,8 @@ export default function ImageUpload({ onFileSelect }) {
         type="file" 
         ref={fileInputRef} 
         style={{ display: 'none' }} 
-        accept="image/jpeg, image/png" 
+        accept="image/jpeg,image/png,image/*"
+        capture="environment" 
         onChange={handleFileChange} 
       />
       <div style={{ marginBottom: 12 }}>
@@ -69,8 +70,8 @@ export default function ImageUpload({ onFileSelect }) {
           <line x1="12" y1="3" x2="12" y2="15"></line>
         </svg>
       </div>
-      <h3 style={{ fontSize: 16, color: 'var(--text-primary)', marginBottom: 6 }}>Drag and drop an image here</h3>
-      <p style={{ fontSize: 13, color: 'var(--text-secondary)' }}>or click to browse from your computer (JPG, PNG)</p>
+      <h3 style={{ fontSize: 16, color: 'var(--text-primary)', marginBottom: 6 }}>Tap or drag an image here</h3>
+      <p style={{ fontSize: 13, color: 'var(--text-secondary)' }}>JPG or PNG from your gallery or files</p>
     </div>
   );
 }

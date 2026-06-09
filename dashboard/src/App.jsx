@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import './index.css'
 import { API, API_CONFIGURED } from './config'
 import LiveFeed from './pages/LiveFeed'
@@ -23,6 +23,19 @@ const NAV = [
 
 export default function App() {
   const [page, setPage] = useState('imagetest')
+  const [navOpen, setNavOpen] = useState(false)
+
+  const currentLabel = NAV.find(n => n.id === page)?.label ?? 'Dashboard'
+
+  useEffect(() => {
+    document.body.style.overflow = navOpen ? 'hidden' : ''
+    return () => { document.body.style.overflow = '' }
+  }, [navOpen])
+
+  const goTo = (id) => {
+    setPage(id)
+    setNavOpen(false)
+  }
 
   const currentPage = {
     imagetest: <ImageTest />,
@@ -36,7 +49,31 @@ export default function App() {
   }[page]
 
   return (
-    <div className="app-shell">
+    <div className={`app-shell${navOpen ? ' nav-open' : ''}`}>
+      <header className="mobile-header">
+        <button
+          type="button"
+          className="mobile-menu-btn"
+          onClick={() => setNavOpen(o => !o)}
+          aria-label={navOpen ? 'Close menu' : 'Open menu'}
+        >
+          {navOpen ? <IconClose /> : <IconMenu />}
+        </button>
+        <div className="mobile-header-title">
+          <IconShield />
+          <span>{currentLabel}</span>
+        </div>
+      </header>
+
+      {navOpen && (
+        <button
+          type="button"
+          className="sidebar-backdrop"
+          aria-label="Close menu"
+          onClick={() => setNavOpen(false)}
+        />
+      )}
+
       <aside className="sidebar">
         <div className="sidebar-logo">
           <IconShield />
@@ -46,24 +83,25 @@ export default function App() {
           {NAV.map(n => (
             <button
               key={n.id}
+              type="button"
               className={`nav-item${page === n.id ? ' active' : ''}`}
-              onClick={() => setPage(n.id)}
+              onClick={() => goTo(n.id)}
             >
               {n.icon}
               {n.label}
             </button>
           ))}
         </nav>
-        <div style={{ padding: '16px 20px', borderTop: '1px solid var(--border)' }}>
-          <div style={{ fontSize: 11, color: API_CONFIGURED ? 'var(--text-muted)' : 'var(--red)' }}>
+        <div className="sidebar-footer">
+          <div className={`sidebar-api${API_CONFIGURED ? '' : ' error'}`}>
             API: {API.replace(/^https?:\/\//, '')}
           </div>
           {!API_CONFIGURED && import.meta.env.PROD && (
-            <div style={{ fontSize: 10, color: 'var(--red)', marginTop: 4 }}>
+            <div className="sidebar-api-error">
               Set VITE_API_URL on Vercel (include https://)
             </div>
           )}
-          <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>v3.0.0 · Phase 3</div>
+          <div className="sidebar-version">v3.0.0 · Phase 3</div>
         </div>
       </aside>
       <main className="main-content">
@@ -103,4 +141,10 @@ function IconExperiment() {
 }
 function IconImage() {
   return <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2" /><circle cx="8.5" cy="8.5" r="1.5" /><polyline points="21 15 16 10 5 21" /></svg>
+}
+function IconMenu() {
+  return <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="3" y1="6" x2="21" y2="6" /><line x1="3" y1="12" x2="21" y2="12" /><line x1="3" y1="18" x2="21" y2="18" /></svg>
+}
+function IconClose() {
+  return <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
 }

@@ -76,6 +76,7 @@ export default function EventsTable() {
         ) : events.length === 0 ? (
           <div className="empty-state">No events recorded yet.</div>
         ) : (
+          <div className="table-scroll">
           <table className="data-table">
             <thead>
               <tr>
@@ -106,6 +107,7 @@ export default function EventsTable() {
               ))}
             </tbody>
           </table>
+          </div>
         )}
 
         <div className="flex-row" style={{ marginTop: 14, justifyContent: 'flex-end', gap: 8 }}>

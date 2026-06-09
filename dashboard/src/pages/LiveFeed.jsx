@@ -173,7 +173,7 @@ export default function LiveFeed() {
 
   return (
     <div>
-      <div className="page-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end' }}>
+      <div className="page-header page-header-flex" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end' }}>
         <div>
           <h1 className="page-title">Live Feed</h1>
           <p className="page-subtitle">Real-time video stream and detection events</p>

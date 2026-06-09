@@ -98,7 +98,7 @@ export default function PersonsManager() {
 
       <div className="grid-2" style={{ alignItems: 'start', gap: 24 }}>
         {/* Enroll/Edit form */}
-        <div className="card" style={{ position: 'sticky', top: 20 }}>
+        <div className="card sticky-form-card" style={{ position: 'sticky', top: 20 }}>
           <div className="card-header" style={{ background: editingId ? 'rgba(59, 130, 246, 0.1)' : 'transparent', borderRadius: '8px 8px 0 0' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
               <span style={{ fontSize: 24 }}>{editingId ? '✏️' : '➕'}</span>

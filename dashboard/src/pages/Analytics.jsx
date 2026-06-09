@@ -34,7 +34,7 @@ function DonutChart({ data, total }) {
   let currentOffset = 0
   
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 30 }}>
+    <div className="donut-chart-wrap" style={{ display: 'flex', alignItems: 'center', gap: 30 }}>
       <svg width={radius * 2 + strokeWidth} height={radius * 2 + strokeWidth} style={{ transform: 'rotate(-90deg)' }}>
         <circle
           cx={radius + strokeWidth / 2}

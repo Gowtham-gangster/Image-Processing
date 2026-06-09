@@ -77,6 +77,7 @@ export default function AlertHistory() {
         ) : alerts.length === 0 ? (
           <div className="empty-state">No security alerts recorded.</div>
         ) : (
+          <div className="table-scroll">
           <table className="data-table">
             <thead>
               <tr>
@@ -101,6 +102,7 @@ export default function AlertHistory() {
               ))}
             </tbody>
           </table>
+          </div>
         )}
 
         <div className="flex-row" style={{ marginTop: 14, justifyContent: 'flex-end', gap: 8 }}>
