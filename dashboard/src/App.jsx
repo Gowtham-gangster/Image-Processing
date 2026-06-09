@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import './index.css'
+import { API, API_CONFIGURED } from './config'
 import LiveFeed from './pages/LiveFeed'
 import ImageTest from './pages/ImageTest'
 import EventsTable from './pages/EventsTable'
@@ -54,7 +55,14 @@ export default function App() {
           ))}
         </nav>
         <div style={{ padding: '16px 20px', borderTop: '1px solid var(--border)' }}>
-          <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>API: localhost:8000</div>
+          <div style={{ fontSize: 11, color: API_CONFIGURED ? 'var(--text-muted)' : 'var(--red)' }}>
+            API: {API.replace(/^https?:\/\//, '')}
+          </div>
+          {!API_CONFIGURED && import.meta.env.PROD && (
+            <div style={{ fontSize: 10, color: 'var(--red)', marginTop: 4 }}>
+              Set VITE_API_URL on Vercel (include https://)
+            </div>
+          )}
           <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>v3.0.0 · Phase 3</div>
         </div>
       </aside>

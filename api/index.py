@@ -200,6 +200,17 @@ class AlertConfig(BaseModel):
 
 # ── Health ────────────────────────────────────────────────────────────────────
 
+@app.get("/", tags=["System"])
+def root():
+    """Root endpoint for quick connectivity checks."""
+    return {
+        "service": "Mask-Aware Person Identification API",
+        "docs": "/docs",
+        "health": "/health",
+        "mode": "cloud_lite" if CLOUD_LITE else "full",
+    }
+
+
 @app.get("/health", tags=["System"])
 def health_check():
     """Verify that the API and AI modules are loaded and healthy."""
