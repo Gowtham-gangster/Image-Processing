@@ -21,9 +21,14 @@ yolov8n.pt
 railway_data.zip
 _railway_data_staging/
 
+# railway_seed/ is committed — bundled data for auto-deploy (build with scripts/build_railway_seed.py)
+!railway_seed/
+!railway_seed/**
+
 # Databases
 database/
 *.db
+!railway_seed/**/*.db
 *.sqlite3
 
 # Logs and Output

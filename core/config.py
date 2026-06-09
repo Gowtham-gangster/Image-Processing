@@ -21,7 +21,11 @@ CLOUD_LITE = (
 )
 
 # ── Dataset paths (under DATA_DIR on Railway volume when set) ─────────────────
-_DATA_ROOT        = os.environ.get("DATA_DIR", ROOT_DIR)
+_DATA_ROOT        = (
+    os.environ.get("DATA_DIR")
+    or os.environ.get("RAILWAY_VOLUME_MOUNT_PATH")
+    or ROOT_DIR
+)
 DATASET_DIR       = os.path.join(_DATA_ROOT, "dataset")
 TRAIN_DIR         = os.path.join(DATASET_DIR, "train")
 TEST_DIR          = os.path.join(DATASET_DIR, "test")

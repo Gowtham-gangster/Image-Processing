@@ -43,6 +43,7 @@ from config import CLOUD_LITE, DATASET_DIR, ROOT_DIR
 from attributes_manager import AttributesManager
 from database import PersonDatabase
 from data_seed import seed_persons_from_csv
+from volume_seed import ensure_volume_seeded
 from alert_manager import AlertManager, ALERT_UNKNOWN_PERSON, ALERT_UNMASKED, ALERT_MASKED, ALERT_SPOOF
 from surveillance_logger import SurveillanceLogger
 from camera_manager import CameraManager
@@ -96,7 +97,11 @@ def get_body_extractor():
 
 
 def _data_dir() -> str:
-    return os.getenv("DATA_DIR", os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    return (
+        os.getenv("DATA_DIR")
+        or os.getenv("RAILWAY_VOLUME_MOUNT_PATH")
+        or os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    )
 
 
 def _reload_faiss_indexes() -> dict:
@@ -236,6 +241,9 @@ def require_pipeline() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    if os.environ.get("RAILWAY_ENVIRONMENT"):
+        seed_result = ensure_volume_seeded(_data_dir())
+        logger.info("Volume seed check: %s", seed_result)
     _init_core_services()
     threading.Thread(target=_init_ml_pipeline, daemon=True, name="ml-pipeline-init").start()
     yield

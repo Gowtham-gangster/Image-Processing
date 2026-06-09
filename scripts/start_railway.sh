@@ -8,6 +8,7 @@ echo " MaskAware API"
 echo " PORT=${PORT}"
 echo " RAILWAY_ENVIRONMENT=${RAILWAY_ENVIRONMENT:-unset}"
 echo " DATA_DIR=${DATA_DIR:-unset}"
+echo " RAILWAY_VOLUME_MOUNT_PATH=${RAILWAY_VOLUME_MOUNT_PATH:-unset}"
 echo " CLOUD_LITE=${CLOUD_LITE:-auto}"
 echo "=============================================="
 

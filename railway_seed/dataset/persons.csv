@@ -1,0 +1,12 @@
+person_id,name,gender,age,phone,address
+person1,John,Male,22,9876543210,Hyderabad
+person2,Linda,Female,21,9876501234,Vijayawada
+person3,Mary,Female,20,9876512345,Chennai
+person4,Jonny,Male,22,9848543210,Kerala
+person5,Abhel,Male,21,9812301234,Mumbai
+person6,Jessica,Female,20,8521412345,Goa
+person7,James,Male,22,6547543210,Delhi
+person8,Michael,Male,21,8876501234,Gujarat
+person9,Lisa,Female,20,9856512345,Pune
+person10,Robert,Male,22,8886543210,Assam
+person11,Gowtham,Male,20,9705067505,Khammam

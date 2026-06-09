@@ -12,7 +12,7 @@ import numpy as np
 
 # Project root by default; Railway volume mounts at DATA_DIR=/app/data
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-BASE_DATA_DIR = os.getenv("DATA_DIR", _PROJECT_ROOT)
+BASE_DATA_DIR = os.getenv("DATA_DIR") or os.getenv("RAILWAY_VOLUME_MOUNT_PATH") or _PROJECT_ROOT
 DATABASE_DIR = os.path.join(BASE_DATA_DIR, "database")
 DATABASE_PATH = os.path.join(DATABASE_DIR, "persons.db")
 

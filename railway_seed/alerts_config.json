@@ -1,0 +1,11 @@
+{
+  "email": {
+    "smtp_host": "smtp.gmail.com",
+    "smtp_port": 587,
+    "sender": "pusuloorigowtham@gmail.com",
+    "password": "",
+    "recipients": [
+      "23r21a05bq@mlrit.ac.in"
+    ]
+  }
+}
