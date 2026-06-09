@@ -52,8 +52,10 @@ export default function AlertSettings() {
         smtp_host:   form.email_host,
         smtp_port:   Number(form.email_port),
         sender:      form.email_sender,
-        password:    form.email_password,
         recipients:  form.email_recipients.split(',').map(s => s.trim()).filter(Boolean),
+      }
+      if (form.email_password.trim()) {
+        body.email.password = form.email_password.trim()
       }
     }
     try {
@@ -72,8 +74,12 @@ export default function AlertSettings() {
     setTesting(true)
     try {
       const r = await fetch(`${API}/alerts/test`, { method: 'POST' })
-      if (r.ok) showToast('Test alert dispatched ✓')
-      else      showToast('Test failed', 'error')
+      const data = await r.json().catch(() => ({}))
+      if (r.ok && data.status === 'ok') {
+        showToast(data.message || 'Test alert sent ✓')
+      } else {
+        showToast(data.message || data.errors?.email || 'Test failed — save config first', 'error')
+      }
     } catch (_) { showToast('Network error', 'error') }
     setTesting(false)
   }
@@ -136,7 +142,10 @@ export default function AlertSettings() {
             </div>
             <div className="form-group">
               <label className="form-label">App Password</label>
-              <input className="form-input" type="password" placeholder="••••••••" {...f('email_password')} />
+              <input className="form-input" type="password" placeholder="Gmail app password (16 chars)" {...f('email_password')} />
+              <p className="form-hint" style={{ marginTop: 6, fontSize: 12, color: '#888' }}>
+                Gmail: use an App Password, not your login password. Leave blank when saving other fields to keep the existing password.
+              </p>
             </div>
             <div className="form-group" style={{ gridColumn: '1 / -1' }}>
               <label className="form-label">Recipient Emails (comma-separated)</label>

@@ -101,10 +101,27 @@ class AlertManager:
 
     def save_config(self, new_config: dict) -> None:
         """Persist a new config dict to disk and reload."""
-        self._config = new_config
+        merged = dict(self._config)
+
+        for key in ("slack_webhook_url", "webhook_url"):
+            if key in new_config:
+                merged[key] = new_config[key]
+
+        if "email" in new_config and new_config["email"] is not None:
+            old_email = dict(merged.get("email") or {})
+            new_email = dict(new_config["email"])
+            pwd = (new_email.get("password") or "").strip()
+            if not pwd or pwd == "***":
+                if old_email.get("password"):
+                    new_email["password"] = old_email["password"]
+                else:
+                    new_email.pop("password", None)
+            merged["email"] = {**old_email, **new_email}
+
+        self._config = merged
         try:
             with open(self._config_path, "w", encoding="utf-8") as f:
-                json.dump(new_config, f, indent=2)
+                json.dump(self._config, f, indent=2)
             logger.info("Alert config saved.")
         except Exception as e:
             logger.error("Failed to save alert config: %s", e)
@@ -179,6 +196,28 @@ class AlertManager:
 
     # ── Internal dispatch ─────────────────────────────────────────────────────
 
+    def send_test_alert(self) -> dict[str, str | None]:
+        """Send a test alert synchronously and return per-channel errors."""
+        payload = {
+            "alert_type": ALERT_UNKNOWN_PERSON,
+            "label": ALERT_LABELS[ALERT_UNKNOWN_PERSON],
+            "camera_id": "Test-Camera",
+            "person_id": "Test Person",
+            "confidence": 0.0,
+            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "note": "This is a test alert from the dashboard.",
+        }
+        errors: dict[str, str | None] = {}
+        if self._config.get("slack_webhook_url"):
+            errors["slack"] = self._send_slack(payload)
+        if self._config.get("email", {}).get("smtp_host"):
+            errors["email"] = self._send_email(payload)
+        if self._config.get("webhook_url"):
+            errors["webhook"] = self._send_webhook(payload)
+        if not errors:
+            errors["email"] = "No alert channels configured."
+        return errors
+
     def _dispatch_all(self, payload: dict) -> None:
         if self._config.get("slack_webhook_url"):
             self._send_slack(payload)
@@ -187,7 +226,7 @@ class AlertManager:
         if self._config.get("webhook_url"):
             self._send_webhook(payload)
 
-    def _send_slack(self, payload: dict) -> None:
+    def _send_slack(self, payload: dict) -> str | None:
         url = self._config["slack_webhook_url"]
         label = payload["label"]
         
@@ -226,10 +265,12 @@ class AlertManager:
             )
             urllib.request.urlopen(req, timeout=5)
             logger.info("Slack alert sent: %s", label)
+            return None
         except Exception as e:
             logger.error("Slack alert failed: %s", e)
+            return str(e)
 
-    def _send_email(self, payload: dict) -> None:
+    def _send_email(self, payload: dict) -> str | None:
         cfg = self._config.get("email", {})
         host = cfg.get("smtp_host", "smtp.gmail.com")
         port = cfg.get("smtp_port", 587)
@@ -237,8 +278,12 @@ class AlertManager:
         password = cfg.get("password", "")
         recipients = cfg.get("recipients", [])
 
+        if not sender:
+            return "Sender email is not configured."
+        if not password:
+            return "SMTP password is missing — re-enter your app password and click Save."
         if not recipients:
-            return
+            return "No recipient emails configured."
 
         # Format timestamp to be more readable (convert to local time)
         try:
@@ -269,17 +314,25 @@ class AlertManager:
             msg["To"] = ", ".join(recipients)
             msg.attach(MIMEText(body_html, "html"))
 
-            with smtplib.SMTP(host, port) as server:
-                server.ehlo()
-                server.starttls()
-                server.login(sender, password)
-                server.sendmail(sender, recipients, msg.as_string())
+            if int(port) == 465:
+                with smtplib.SMTP_SSL(host, int(port), timeout=30) as server:
+                    server.login(sender, password)
+                    server.sendmail(sender, recipients, msg.as_string())
+            else:
+                with smtplib.SMTP(host, int(port), timeout=30) as server:
+                    server.ehlo()
+                    server.starttls()
+                    server.ehlo()
+                    server.login(sender, password)
+                    server.sendmail(sender, recipients, msg.as_string())
 
             logger.info("Email alert sent to %s", recipients)
+            return None
         except Exception as e:
             logger.error("Email alert failed: %s", e)
+            return str(e)
 
-    def _send_webhook(self, payload: dict) -> None:
+    def _send_webhook(self, payload: dict) -> str | None:
         url = self._config["webhook_url"]
         try:
             data = json.dumps(payload).encode("utf-8")
@@ -288,5 +341,7 @@ class AlertManager:
             )
             urllib.request.urlopen(req, timeout=5)
             logger.info("Webhook alert sent to %s", url)
+            return None
         except Exception as e:
             logger.error("Webhook alert failed: %s", e)
+            return str(e)

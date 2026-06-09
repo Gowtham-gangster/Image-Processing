@@ -25,9 +25,10 @@ from sync_bundle import build_sync_zip  # noqa: E402
 
 
 def _resolve_url() -> str:
-    url = os.environ.get("RAILWAY_API_URL", "").strip()
-    if not url and len(sys.argv) > 1:
+    if len(sys.argv) > 1:
         url = sys.argv[1].strip()
+    else:
+        url = os.environ.get("RAILWAY_API_URL", "").strip()
     if not url:
         url = input("Railway API URL (https://....up.railway.app): ").strip()
     if not url:

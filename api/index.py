@@ -545,15 +545,16 @@ def set_alert_config(config: AlertConfig):
 
 @app.post("/alerts/test", tags=["Alerts"])
 def test_alert():
-    """Fire a test alert across all configured channels."""
-    alert_mgr.send_alert(
-        ALERT_UNKNOWN_PERSON,
-        camera_id="Test-Camera",
-        person_id="Test Person",
-        confidence=0.0,
-        extra={"note": "This is a test alert from the dashboard."},
-    )
-    return {"status": "test_alert_dispatched"}
+    """Fire a test alert synchronously and return per-channel delivery errors."""
+    errors = alert_mgr.send_test_alert()
+    failed = {k: v for k, v in errors.items() if v}
+    if failed:
+        return {
+            "status": "failed",
+            "errors": failed,
+            "message": "; ".join(f"{k}: {v}" for k, v in failed.items()),
+        }
+    return {"status": "ok", "errors": errors, "message": "Test alert sent successfully."}
 
 @app.get("/alerts/history", tags=["Alerts"])
 def get_alert_history(limit: int = 50, offset: int = 0):
