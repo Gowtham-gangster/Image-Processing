@@ -13,3 +13,4 @@ requests
 pydantic
 scikit-image
 pillow
+mtcnn
